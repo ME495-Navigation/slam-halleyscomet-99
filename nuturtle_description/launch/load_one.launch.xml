@@ -1,21 +1,28 @@
 <launch>
     <arg name="use_rviz" default="true" />
     <arg name="use_jsp" default="true" />
+    <arg name="color" default="purple" >
+        <choice value="purple" />
+        <choice value="blue" />
+        <choice value="green" />
+        <choice value="red" />
+    </arg>
 
-    <let name="urdf_path" 
-         value="$(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro" />
-    
-    <node pkg="robot_state_publisher" exec="robot_state_publisher" name="robot_state_publisher">
-        <param name="robot_description" value="$(command 'xacro $(var urdf_path)')" />
-    </node>
+    <group scoped="true">
+        <push-ros-namespace namespace="$(var color)"/>
 
-    <group if="$(var use_jsp)">
-        <node pkg="joint_state_publisher" exec="joint_state_publisher" name="joint_state_publisher" />
-    </group>
+        <node pkg="robot_state_publisher" exec="robot_state_publisher" name="robot_state_publisher">
+            <param name="robot_description" 
+                   value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=$(var color)')" />
+            <param name="frame_prefix" value="$(var color)/" />
+        </node>
 
-    <group if="$(var use_rviz)">
+        <node pkg="joint_state_publisher" exec="joint_state_publisher" name="joint_state_publisher" 
+              if="$(var use_jsp)" />
+
         <node pkg="rviz2" exec="rviz2" name="rviz2" 
-              args="-d $(find-pkg-share nuturtle_description)/config/load_one.rviz"
+              args="-d $(find-pkg-share nuturtle_description)/config/load_$(var color).rviz"
+              if="$(var use_rviz)"
               on_exit="shutdown" />
     </group>
 </launch>
