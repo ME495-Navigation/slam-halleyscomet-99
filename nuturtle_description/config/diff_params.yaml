@@ -1,0 +1,15 @@
+/**:
+  ros__parameters:
+
+    # The radius of the wheels (see: Turtlebot3 Specifications)
+    wheel_radius: 0.033 # in meters
+    # The distance between the wheels (see: Turtlebot3 Specifications)
+    track_width: 0.16 # in meters
+    # The motors are provided commands in the interval [-motor_cmd_max, motor_cmd_max]
+    motor_cmd_max: 265.0
+    # Each motor command unit (mcu) is 0.024 rad/sec (i.e., 1 mcu = 0.024 rad/sec)
+    motor_cmd_per_rad_sec: 0.024
+    # The number of encoder ticks per radian
+    encoder_ticks_per_rad: 651.8986
+    # Set this value to be 0.11: we will use a cylinder as simplified geometry used for collision detection
+    collision_radius: 0.11
