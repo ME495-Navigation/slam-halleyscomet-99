@@ -11,7 +11,9 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
 endif()
 
 # --- Library Target ---
-add_library(turtlelib src/geometry2d.cpp)
+add_library(turtlelib 
+    src/geometry2d.cpp
+)
 
 target_include_directories(turtlelib
     PUBLIC
@@ -55,3 +57,13 @@ install(EXPORT turtlelib-targets
     NAMESPACE turtlelib::
     DESTINATION lib/cmake/turtlelib
 )
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Catch2 3 REQUIRED)
+
+    add_executable(test_geometry2d tests/test_geometry2d.cpp)
+    target_link_libraries(test_geometry2d turtlelib Catch2::Catch2WithMain)
+
+    add_test(NAME geometry2d_tests COMMAND test_geometry2d)
+endif()
