@@ -5,12 +5,18 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Enable C++23 support
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(nuturtle_description REQUIRED)
 find_package(turtlelib REQUIRED)
@@ -21,8 +27,10 @@ target_link_libraries(nusimulator PUBLIC
       ${std_msgs_TARGETS}
       ${std_srvs_TARGETS}
       rclcpp::rclcpp
+      tf2::tf2
       tf2_ros::static_transform_broadcaster_node
       tf2_ros::tf2_ros
+      turtlelib::turtlelib
 )
 
 install(TARGETS
