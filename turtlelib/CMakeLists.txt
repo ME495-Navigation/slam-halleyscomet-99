@@ -53,6 +53,8 @@ option(BUILD_DOCS "Build the documentation" OFF)
 if(DOXYGEN_FOUND AND BUILD_DOCS)
     # Configure Doxygen to use README.md as the landing page
     set(DOXYGEN_USE_MDFILE_AS_MAINPAGE README.md)
+    # Use MathJax support
+    set(DOXYGEN_USE_MATHJAX YES)
     # Generate documentation from include headers, source files, and README
     doxygen_add_docs(doxygen include/ src/ README.md ALL)
 endif()
