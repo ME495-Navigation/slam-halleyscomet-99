@@ -70,11 +70,17 @@ namespace turtlelib
     Vector2D normalize(Vector2D in);
 }
 
+/// \cond
 /// \brief A Formatter for 2D points. Output is (x, y)
 template<class CharT>
 struct std::formatter<turtlelib::Point2D, CharT> : std::formatter<double, CharT>
 {
     /// \brief Formats the Point2D object
+
+    constexpr auto parse(std::format_parse_context & ctx) {
+        return std::formatter<double, CharT>::parse(ctx);
+    }
+    
     template<typename FormatContext>
     auto format(const turtlelib::Point2D & p, FormatContext & ctx) const
     {
@@ -103,5 +109,6 @@ struct std::formatter<turtlelib::Vector2D, CharT> : std::formatter<double, CharT
         return std::format_to(it, "]");
     }
 };
+/// \endcond
 
 #endif
