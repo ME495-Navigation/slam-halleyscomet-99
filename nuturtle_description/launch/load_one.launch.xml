@@ -1,7 +1,8 @@
+<?xml version="1.0"?>
 <launch>
-    <arg name="use_rviz" default="true" />
-    <arg name="use_jsp" default="true" />
-    <arg name="color" default="purple" >
+    <arg name="use_rviz" default="true" description="Whether to start RViz2." />
+    <arg name="use_jsp" default="true" description="Whether to start the joint_state_publisher." />
+    <arg name="color" default="purple" description="The color of the robot. Options: purple, blue, green, red.">
         <choice value="purple" />
         <choice value="blue" />
         <choice value="green" />

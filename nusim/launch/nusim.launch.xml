@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="config_file" default="$(find-pkg-share nusim)/config/basic_world.yaml" />
+  <arg name="config_file" 
+       default="$(find-pkg-share nusim)/config/basic_world.yaml" 
+       description="The path to the YAML file containing simulation environment parameters such as obstacle locations and robot initial pose." />
 
   <node pkg="nusim" exec="nusimulator" name="nusimulator">
     <param from="$(var config_file)" />

@@ -4,7 +4,7 @@
 
 TEST_CASE("Svg produces valid XML structure and elements", "[svg]") {
     turtlelib::Svg svg;
-    
+
     SECTION("Empty SVG has correct header/footer") {
         std::string result = svg.write();
         CHECK_THAT(result, Catch::Matchers::StartsWith("<?xml"));
