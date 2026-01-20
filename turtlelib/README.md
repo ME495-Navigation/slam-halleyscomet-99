@@ -1,4 +1,4 @@
-# Turtlelib Library
+# Turtlelib
 A standalone C++ library for 2D rigid body transformations, geometric primitives, and visualization, designed for the Nuturtle robot project.
 
 ## Library Components
