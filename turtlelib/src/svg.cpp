@@ -35,7 +35,7 @@ void Svg::draw(Transform2D tf, std::string label)
   Vector2D x_axis = tf(Vector2D{0.5, 0.0});       // 0.5 meter axis
   Vector2D y_axis = tf(Vector2D{0.0, 0.5});
 
-        // Draw axes lines (note: tf(Vector2D) only rotates, we need the head relative to world)
+        // Draw axes lines
   draw(origin, x_axis, "red");
   draw(origin, y_axis, "green");
 

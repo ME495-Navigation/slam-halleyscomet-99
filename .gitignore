@@ -1,0 +1,12 @@
+# ROS 2 build spaces
+build/
+install/
+log/
+
+# Documentation output
+docs_build/
+docs_output/
+
+# OS specific
+.DS_Store
+.vscode/

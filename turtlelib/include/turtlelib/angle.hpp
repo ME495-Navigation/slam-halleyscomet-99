@@ -2,7 +2,6 @@
 #define TURTLELIB_ANGLE_HPP_INCLUDE_GUARD
 
 /// \brief Functions for handling angles
-/// NOTE: Include any needed header files here
 #include <cmath>
 #include <numbers>
 
@@ -28,10 +27,6 @@ constexpr bool almost_equal(double d1, double d2, double epsilon = 1.0e-12)
     /// \returns The equivalent angle in radians
 constexpr double deg2rad(double deg)
 {
-        // HINT: C++20 #include<numbers> defines standard values
-        // for many mathematical constants. Prior to C++20 you
-        // would need to define your own constant for pi.
-        // You should use the standardized value now
   return deg * std::numbers::pi / 180.0;
 }
 
@@ -48,7 +43,6 @@ constexpr double rad2deg(double rad)
     /// \return An equivalent angle the range (-PI, PI]
 constexpr double normalize_angle(double rad)
 {
-        // NOTE: You will receive partial credit only if this function uses loops.
   while (rad > std::numbers::pi) {
     rad -= 2.0 * std::numbers::pi;
   }

@@ -1,3 +1,6 @@
+/// \file
+/// \brief Implementation of 2D rigid body transformations and twist integration.
+
 #include <iostream>
 #include <cmath>
 #include <string>
@@ -7,23 +10,48 @@ namespace turtlelib
 {
 std::istream & operator>>(std::istream & is, Twist2D & tw)
 {
-  std::string unit_str = "";
-  char c;
+  auto unit_str = std::string("");
+  auto c = '\0';
   if (is.peek() == '<') {
     is >> c >> tw.omega;
-    if (std::isalpha(is.peek())) {is >> unit_str;}
+    if (std::isalpha(is.peek())) {
+      is >> unit_str;
+    }
     is >> c >> tw.x >> c >> tw.y >> c;
   } else {
     is >> tw.omega;
-    if (std::isalpha(is.peek())) {is >> unit_str;}
+    if (std::isalpha(is.peek())) {
+      is >> unit_str;
+    }
     is >> tw.x >> tw.y;
   }
-  if (!unit_str.empty() && unit_str[0] == 'd') {
+
+  if (!unit_str.empty() && unit_str.at(0) == 'd') {
     tw.omega = deg2rad(tw.omega);
   }
   return is;
 }
 
+// Twist2D Operators
+Twist2D & Twist2D::operator*=(const double s)
+{
+  omega *= s;
+  x *= s;
+  y *= s;
+  return *this;
+}
+
+Twist2D operator*(Twist2D lhs, const double rhs)
+{
+  return lhs *= rhs;
+}
+
+Twist2D operator*(const double lhs, Twist2D rhs)
+{
+  return rhs *= lhs;
+}
+
+// Transform2D Implementation
 Transform2D::Transform2D()
 : x_(0.0), y_(0.0), theta_(0.0) {}
 
@@ -38,37 +66,45 @@ Transform2D::Transform2D(Vector2D trans, double radians)
 
 Point2D Transform2D::operator()(Point2D p) const
 {
-  return {p.x * std::cos(theta_) - p.y * std::sin(theta_) + x_,
-    p.x * std::sin(theta_) + p.y * std::cos(theta_) + y_};
+  const auto s = std::sin(theta_);
+  const auto c = std::cos(theta_);
+  return {p.x * c - p.y * s + x_,
+    p.x * s + p.y * c + y_};
 }
 
 Vector2D Transform2D::operator()(Vector2D v) const
 {
-  return {v.x * std::cos(theta_) - v.y * std::sin(theta_),
-    v.x * std::sin(theta_) + v.y * std::cos(theta_)};
+  const auto s = std::sin(theta_);
+  const auto c = std::cos(theta_);
+  return {v.x * c - v.y * s,
+    v.x * s + v.y * c};
 }
 
 Twist2D Transform2D::operator()(Twist2D v) const
 {
-        // Using the Adjoint transformation for SE(2)
+  const auto s = std::sin(theta_);
+  const auto c = std::cos(theta_);
   return {v.omega,
-    y_ * v.omega + std::cos(theta_) * v.x - std::sin(theta_) * v.y,
-    -x_ * v.omega + std::sin(theta_) * v.x + std::cos(theta_) * v.y};
+    y_ * v.omega + c * v.x - s * v.y,
+    -x_ * v.omega + s * v.x + c * v.y};
 }
 
 Transform2D Transform2D::inv() const
 {
-        // T^-1 = [R^T, -R^T * p]
-  double inv_theta = -theta_;
-  double inv_x = -(x_ * std::cos(theta_) + y_ * std::sin(theta_));
-  double inv_y = -(-x_ * std::sin(theta_) + y_ * std::cos(theta_));
+  const auto s = std::sin(theta_);
+  const auto c = std::cos(theta_);
+  const auto inv_theta = -theta_;
+  const auto inv_x = -(x_ * c + y_ * s);
+  const auto inv_y = -(-x_ * s + y_ * c);
   return Transform2D({inv_x, inv_y}, inv_theta);
 }
 
 Transform2D & Transform2D::operator*=(const Transform2D & rhs)
 {
-  double new_x = rhs.x_ * std::cos(theta_) - rhs.y_ * std::sin(theta_) + x_;
-  double new_y = rhs.x_ * std::sin(theta_) + rhs.y_ * std::cos(theta_) + y_;
+  const auto s = std::sin(theta_);
+  const auto c = std::cos(theta_);
+  const auto new_x = rhs.x_ * c - rhs.y_ * s + x_;
+  const auto new_y = rhs.x_ * s + rhs.y_ * c + y_;
   theta_ += rhs.theta_;
   x_ = new_x;
   y_ = new_y;
@@ -85,33 +121,54 @@ double Transform2D::rotation() const
   return theta_;
 }
 
+// Task B.9: Integrate Twist
+Transform2D integrate_twist(Twist2D tw)
+{
+  if (almost_equal(tw.omega, 0.0)) {
+        // Case 1: Pure translation
+    return Transform2D({tw.x, tw.y}, 0.0);
+  } else {
+        // Case 2: Translation and Rotation (Rigid body following a circular arc)
+        // Center of rotation in body frame: s = [y/w, -x/w]^T
+        // Transform = Tsb * T_pure_rot(w) * Tbs
+    const auto s = std::sin(tw.omega);
+    const auto c = std::cos(tw.omega);
+
+    const auto dx = (tw.x * s + tw.y * (c - 1.0)) / tw.omega;
+    const auto dy = (tw.y * s + tw.x * (1.0 - c)) / tw.omega;
+
+    return Transform2D({dx, dy}, tw.omega);
+  }
+}
+
+// I/O Operators
 std::istream & operator>>(std::istream & is, Transform2D & tf)
 {
-  double theta = 0.0, dx = 0.0, dy = 0.0;
-  std::string unit_str = "";
-  char c;
+  auto theta = 0.0;
+  auto dx = 0.0;
+  auto dy = 0.0;
+  auto unit_str = std::string("");
+  auto c = '\0';
 
-        // Peek to see if we have the bracket format "{"
   if (is.peek() == '{') {
-    is >> c;         // consume '{'
+    is >> c;
     is >> theta;
-
-            // Peek for unit (e.g., "deg")
     is >> std::ws;
     if (std::isalpha(is.peek())) {
       is >> unit_str;
     }
-
-            // Handle the comma after the angle/unit
-    if (is.peek() == ',') {is >> c;}
-
+    if (is.peek() == ',') {
+      is >> c;
+    }
     is >> dx;
-    if (is.peek() == ',') {is >> c;}           // handle comma
+    if (is.peek() == ',') {
+      is >> c;
+    }
     is >> dy;
-
-    if (is.peek() == '}') {is >> c;}           // consume '}'
+    if (is.peek() == '}') {
+      is >> c;
+    }
   } else {
-            // Handle "theta dx dy" format
     is >> theta;
     is >> std::ws;
     if (std::isalpha(is.peek())) {
@@ -120,7 +177,7 @@ std::istream & operator>>(std::istream & is, Transform2D & tf)
     is >> dx >> dy;
   }
 
-  if (!unit_str.empty() && unit_str[0] == 'd') {
+  if (!unit_str.empty() && unit_str.at(0) == 'd') {
     theta = deg2rad(theta);
   }
 
@@ -132,4 +189,4 @@ Transform2D operator*(Transform2D lhs, const Transform2D & rhs)
 {
   return lhs *= rhs;
 }
-}
+} // namespace turtlelib

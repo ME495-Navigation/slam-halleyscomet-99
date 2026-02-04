@@ -2,10 +2,11 @@
 #define TURTLELIB_SE2_INCLUDE_GUARD_HPP
 
 /// \file
-/// \brief Two-dimensional rigid body transformations.
+/// \brief Two-dimensional rigid body transformations and twists.
 
 #include <iosfwd>
 #include <format>
+#include <string>
 #include "turtlelib/geometry2d.hpp"
 #include "turtlelib/angle.hpp"
 
@@ -22,7 +23,24 @@ struct Twist2D
 
         /// \brief the linear y velocity
   double y = 0.0;
+
+        /// \brief multiply a twist by a scalar
+        /// \param s - the scalar to multiply by
+        /// \return a reference to the updated twist
+  Twist2D & operator*=(const double s);
 };
+
+    /// \brief multiply a twist by a scalar
+    /// \param lhs - the twist
+    /// \param rhs - the scalar
+    /// \return a scaled twist
+Twist2D operator*(Twist2D lhs, const double rhs);
+
+    /// \brief multiply a twist by a scalar
+    /// \param lhs - the scalar
+    /// \param rhs - the twist
+    /// \return a scaled twist
+Twist2D operator*(const double lhs, Twist2D rhs);
 
     /// \brief read the Twist2D in the format "<w [<unit>], x, y>" or as "w [<unit>] x y"
 std::istream & operator>>(std::istream & is, Twist2D & tw);
@@ -84,9 +102,9 @@ public:
   friend struct std::formatter;
 
 private:
-  double x_ = 0.0;           ///< Translation in x
-  double y_ = 0.0;           ///< Translation in y
-  double theta_ = 0.0;       ///< Rotation in radians
+  double x_ = 0.0;                 ///< Translation in x
+  double y_ = 0.0;                 ///< Translation in y
+  double theta_ = 0.0;             ///< Rotation in radians
 };
 
     /// \brief Read a transformation from stdin
@@ -94,6 +112,11 @@ std::istream & operator>>(std::istream & is, Transform2D & tf);
 
     /// \brief multiply two transforms together, returning their composition
 Transform2D operator*(Transform2D lhs, const Transform2D & rhs);
+
+    /// \brief Compute the transformation corresponding to a constant twist for one time unit
+    /// \param tw - the constant twist
+    /// \return the resulting transformation
+Transform2D integrate_twist(Twist2D tw);
 
 } // namespace turtlelib
 
@@ -108,24 +131,13 @@ struct std::formatter<turtlelib::Transform2D, CharT>: std::formatter<double, Cha
     /// \brief Parse the format specifier
     /// \param ctx The parse context
     /// \return The iterator to the end of the format specifier
-  constexpr auto parse(std::format_parse_context & ctx)
-  {
-    auto it = ctx.begin();
-    if (it != ctx.end() && (*it == 'R' || *it == 'D')) {
-      unit_type = *it++;
-    }
-    ctx.advance_to(it);
-    return std::formatter<double, CharT>::parse(ctx);
-  }
-
   template<typename ParseContext>
-  auto parse(ParseContext & ctx)
+  constexpr auto parse(ParseContext & ctx)
   {
     auto it = ctx.begin();
     if (it != ctx.end() && (*it == 'R' || *it == 'D')) {
       unit_type = *it++;
     }
-    ctx.advance_to(it);
     return std::formatter<double, CharT>::parse(ctx);
   }
 
@@ -139,11 +151,15 @@ struct std::formatter<turtlelib::Transform2D, CharT>: std::formatter<double, Cha
     auto it = ctx.out();
     double rot = tf.rotation();
     std::string unit = "";
-    if (unit_type == 'R') {unit = " rad";} else if (unit_type == 'D') {
-      rot = turtlelib::rad2deg(rot); unit = " deg";
+    if (unit_type == 'R') {
+      unit = " rad";
+    } else if (unit_type == 'D') {
+      rot = turtlelib::rad2deg(rot);
+      unit = " deg";
     }
 
     it = std::format_to(it, "{{");
+    ctx.advance_to(it);
     it = std::formatter<double, CharT>::format(rot, ctx);
     it = std::format_to(it, "{}, {}, {}}}", unit, tf.translation().x, tf.translation().y);
     return it;
@@ -158,27 +174,13 @@ struct std::formatter<turtlelib::Twist2D, CharT>: std::formatter<double, CharT>
   char unit_type = '\0';
 
     /// \brief Parse the format specifier
-    /// \param ctx The parse context
-    /// \return The iterator to the end of the format specifier
-  constexpr auto parse(std::format_parse_context & ctx)
-  {
-    auto it = ctx.begin();
-    if (it != ctx.end() && (*it == 'R' || *it == 'D')) {
-      unit_type = *it++;
-    }
-    ctx.advance_to(it);
-    return std::formatter<double, CharT>::parse(ctx);
-  }
-
-    /// \brief Format the Twist2D
   template<typename ParseContext>
-  auto parse(ParseContext & ctx)
+  constexpr auto parse(ParseContext & ctx)
   {
     auto it = ctx.begin();
     if (it != ctx.end() && (*it == 'R' || *it == 'D')) {
       unit_type = *it++;
     }
-    ctx.advance_to(it);
     return std::formatter<double, CharT>::parse(ctx);
   }
 
@@ -192,11 +194,15 @@ struct std::formatter<turtlelib::Twist2D, CharT>: std::formatter<double, CharT>
     auto it = ctx.out();
     double rot = tw.omega;
     std::string unit = "";
-    if (unit_type == 'R') {unit = " rad/s";} else if (unit_type == 'D') {
-      rot = turtlelib::rad2deg(rot); unit = " deg/s";
+    if (unit_type == 'R') {
+      unit = " rad/s";
+    } else if (unit_type == 'D') {
+      rot = turtlelib::rad2deg(rot);
+      unit = " deg/s";
     }
 
     it = std::format_to(it, "[");
+    ctx.advance_to(it);
     it = std::formatter<double, CharT>::format(rot, ctx);
     it = std::format_to(it, "{}, {}, {}]", unit, tw.x, tw.y);
     return it;
