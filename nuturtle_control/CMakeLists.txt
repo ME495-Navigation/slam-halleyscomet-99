@@ -23,11 +23,13 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(nuturtlebot_msgs REQUIRED)
 find_package(turtlelib REQUIRED)
 find_package(nuturtle_description REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 # --- Generate Custom Interfaces ---
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/InitialPose.srv"
+  "srv/Control.srv"
   DEPENDENCIES geometry_msgs
 )
 
@@ -46,23 +48,35 @@ target_link_libraries(turtle_control
 
 # 2. Odometry Node
 add_executable(odometry src/odometry.cpp)
-target_link_libraries(odometry 
+target_link_libraries(odometry
   PRIVATE
-  rclcpp::rclcpp 
+  rclcpp::rclcpp
   turtlelib::turtlelib
   nav_msgs::nav_msgs__rosidl_typesupport_cpp
   sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
   tf2::tf2
   tf2_ros::tf2_ros
 )
-# Ensure odometry links to the generated InitialPose service
+
+# 3. Circle Node (Task E.3)
+add_executable(circle src/circle.cpp)
+target_link_libraries(circle
+  PRIVATE
+  rclcpp::rclcpp
+  geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
+  std_srvs::std_srvs__rosidl_typesupport_cpp
+)
+
+# Link custom interfaces to nodes that use them
 rosidl_get_typesupport_target(cpp_typesupport_target "${PROJECT_NAME}" "rosidl_typesupport_cpp")
 target_link_libraries(odometry PRIVATE "${cpp_typesupport_target}")
+target_link_libraries(circle PRIVATE "${cpp_typesupport_target}")
 
 # --- Installation ---
 install(TARGETS
   turtle_control
   odometry
+  circle
   DESTINATION lib/${PROJECT_NAME}
 )
 

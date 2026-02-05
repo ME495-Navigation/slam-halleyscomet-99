@@ -1,0 +1,5 @@
+# Request
+float64 velocity    # Angular velocity (rad/s)
+float64 radius      # Radius of the circle (m)
+---
+# Response
