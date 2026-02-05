@@ -59,6 +59,7 @@ Twist2D Transform2D::operator()(Twist2D v) const
 Transform2D Transform2D::inv() const
 {
         // T^-1 = [R^T, -R^T * p]
+    // const auto
   double inv_theta = -theta_;
   double inv_x = -(x_ * std::cos(theta_) + y_ * std::sin(theta_));
   double inv_y = -(-x_ * std::sin(theta_) + y_ * std::cos(theta_));
@@ -67,6 +68,7 @@ Transform2D Transform2D::inv() const
 
 Transform2D & Transform2D::operator*=(const Transform2D & rhs)
 {
+    // auto
   double new_x = rhs.x_ * std::cos(theta_) - rhs.y_ * std::sin(theta_) + x_;
   double new_y = rhs.x_ * std::sin(theta_) + rhs.y_ * std::cos(theta_) + y_;
   theta_ += rhs.theta_;
@@ -89,7 +91,7 @@ std::istream & operator>>(std::istream & is, Transform2D & tf)
 {
   double theta = 0.0, dx = 0.0, dy = 0.0;
   std::string unit_str = "";
-  char c;
+  char c; // uninitialized variable
 
         // Peek to see if we have the bracket format "{"
   if (is.peek() == '{') {
@@ -130,6 +132,11 @@ std::istream & operator>>(std::istream & is, Transform2D & tf)
 
 Transform2D operator*(Transform2D lhs, const Transform2D & rhs)
 {
+    // Your code is technically not equivalent to
+    // lhs *= rhs;
+    // return rhs;
+    // This is because lhs *= rhs returns a Transform2D &
+    // in subtle cases this difference can cause issues which is why the former is preferred
   return lhs *= rhs;
 }
 }

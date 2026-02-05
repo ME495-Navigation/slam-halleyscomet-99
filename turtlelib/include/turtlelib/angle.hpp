@@ -16,6 +16,7 @@ namespace turtlelib
     /// \return true if abs(d1 - d2) < epsilon
 constexpr bool almost_equal(double d1, double d2, double epsilon = 1.0e-12)
 {
+    // this works, but can be simplified
   double diff = d1 - d2;
   if (diff < 0) {
     diff = -diff;
@@ -49,6 +50,7 @@ constexpr double rad2deg(double rad)
 constexpr double normalize_angle(double rad)
 {
         // NOTE: You will receive partial credit only if this function uses loops.
+    // fmod could help
   while (rad > std::numbers::pi) {
     rad -= 2.0 * std::numbers::pi;
   }
