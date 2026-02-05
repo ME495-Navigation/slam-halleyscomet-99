@@ -147,7 +147,6 @@ double angle(Vector2D v1, Vector2D v2)
 Vector2D normalize(Vector2D in)
 {
   const auto mag = magnitude(in);
-        // Guidelines: Use double precision literals
   if (almost_equal(mag, 0.0)) {
     throw std::invalid_argument("Cannot normalize a zero vector.");
   }

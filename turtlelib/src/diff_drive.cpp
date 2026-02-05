@@ -38,7 +38,6 @@ void DiffDrive::forward_kinematics(WheelPositions new_pos)
 
 WheelVelocities DiffDrive::inverse_kinematics(Twist2D cmd) const
 {
-        // Guidelines: Check for slipping (non-zero y velocity)
   if (!almost_equal(cmd.y, 0.0)) {
     throw std::logic_error("Twist requires slipping which is not possible for diff drive");
   }

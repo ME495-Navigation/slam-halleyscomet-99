@@ -1,0 +1,6 @@
+# Request
+float64 x      # The x-coordinate in the odom frame
+float64 y      # The y-coordinate in the odom frame
+float64 theta  # The orientation (angle) in radians
+---
+# Response

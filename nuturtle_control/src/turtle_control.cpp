@@ -102,7 +102,6 @@ private:
     diff_robot_.forward_kinematics({l_pos, r_pos});
   }
 
-  // Member variables without this-> according to guidelines
   turtlelib::DiffDrive diff_robot_;
   int motor_max_;
   double motor_scaling_;
