@@ -1,11 +1,16 @@
 # Turtlelib
-A standalone C++ library for 2D rigid body transformations, geometric primitives, and visualization, designed for the Nuturtle robot project.
+A standalone C++ library for 2D rigid body transformations, geometric primitives, differential drive kinematics, and visualization, designed for the Nuturtle robot project.
 
 ## Library Components
 * **angle.hpp**: Provides functions for angular math, including degree/radian conversions and angle normalization to the $(-\pi, \pi]$ range.
-* **geometry2d.hpp**: Defines basic 2D primitives such as `Point2D` and `Vector2D`, including support for vector normalization, addition, subtraction, and custom I/O streaming.
-* **se2d.hpp**: Implements $SE(2)$ rigid body transformations (`Transform2D`) and twists (`Twist2D`), supporting composition, inversion, and adjoint transformations.
+* **geometry2d.hpp**: Defines basic 2D primitives such as `Point2D` and `Vector2D`, including support for vector normalization, addition, subtraction, dot products, and magnitude calculations.
+* **se2d.hpp**: Implements $SE(2)$ rigid body transformations (`Transform2D`) and twists (`Twist2D`), supporting composition, inversion, adjoint transformations, and twist integration.
+* **diff_drive.hpp**: Models the kinematics of a differential drive robot. It tracks wheel positions and robot configuration while providing Forward and Inverse Kinematics functionality.
 * **svg.hpp**: A utility for exporting 2D geometric objects (Points, Vectors, and Coordinate Frames) into SVG (Scalable Vector Graphics) files for visualization.
+
+## Kinematics Documentation
+Detailed mathematical derivations for the differential drive kinematics, including the formulas for wheel velocities (Inverse Kinematics) and pose updates (Forward Kinematics), are recorded in:
+* **doc/Kinematics.pdf**: Contains the coordinate frame definitions and step-by-step derivation of the motion equations used in `diff_drive.cpp`.
 
 ## Tools and Examples
 
@@ -30,8 +35,6 @@ A program that calculates various coordinate transformations between three frame
     cp /tmp/frames.svg src/turtlelib/exercises/B6_frames.svg
     ```
 
-
-
 ## Build Instructions
 To build the library and its associated tests/executables in a ROS 2 workspace:
 
@@ -46,7 +49,7 @@ To build the library and its associated tests/executables in a ROS 2 workspace:
 3. **Run Unit Tests**:
     ```bash
     colcon build --packages-select turtlelib --cmake-args -DBUILD_TESTING=ON
-    ./build/turtlelib/test_se2d
+    colcon test --packages-select turtlelib --ctest-args -R diff_drive_tests
     ```
 
 ## Example Visualization

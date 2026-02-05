@@ -19,6 +19,7 @@ add_library(turtlelib
     src/geometry2d.cpp
     src/se2d.cpp
     src/svg.cpp
+    src/diff_drive.cpp
 )
 
 # Set include directories for the library
@@ -101,4 +102,9 @@ if(BUILD_TESTING)
     add_executable(test_svg tests/test_svg.cpp)
     target_link_libraries(test_svg turtlelib Catch2::Catch2WithMain)
     add_test(NAME svg_tests COMMAND test_svg)
+
+    # Test Target for DiffDrive
+    add_executable(test_diff_drive tests/test_diff_drive.cpp)
+    target_link_libraries(test_diff_drive turtlelib Catch2::Catch2WithMain)
+    add_test(NAME diff_drive_tests COMMAND test_diff_drive)
 endif()
