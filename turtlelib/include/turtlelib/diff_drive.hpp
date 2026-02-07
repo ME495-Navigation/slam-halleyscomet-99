@@ -59,11 +59,11 @@ public:
 
   /// \brief Get the track width of the robot
   /// \return the track width in meters
-  double track_width() const { return track_width_; }
+  double track_width() const {return track_width_;}
 
   /// \brief Get the wheel radius of the robot
   /// \return the wheel radius in meters
-  double wheel_radius() const { return wheel_radius_; }
+  double wheel_radius() const {return wheel_radius_;}
 
 private:
   double track_width_ = 0.16;   ///< Distance between wheels

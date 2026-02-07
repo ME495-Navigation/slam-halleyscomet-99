@@ -70,7 +70,7 @@ TEST_CASE("Twist2D transformation (Adjoint)", "[transform]") // Chenwan Halley Z
 TEST_CASE("Twist2D scalar multiplication (operator*= and *)", "[twist]") // Chenwan Halley Zhong
 {
     Twist2D tw{1.0, 2.0, 3.0};
-    
+
     SECTION("operator*=") {
         tw *= 2.0;
         CHECK_THAT(tw.omega, Catch::Matchers::WithinAbs(2.0, 1e-12));

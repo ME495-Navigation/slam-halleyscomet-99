@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="nuturtle_control" exec="circle" name="circle">
+    <param name="frequency" value="100.0"/>
+  </node>
+
+  <catch2_integration_test_node pkg="nuturtle_control" exec="turtle_circle_test">
+    <param name="test_duration" value="2.0"/>
+  </catch2_integration_test_node>
+</launch>

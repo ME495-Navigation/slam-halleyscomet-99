@@ -26,6 +26,9 @@
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>catch_ros2</test_depend>
+  <test_depend>tf2_tools</test_depend>
+  <test_depend>joint_state_publisher</test_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 

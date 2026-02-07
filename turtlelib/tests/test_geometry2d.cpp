@@ -52,13 +52,13 @@ TEST_CASE("Vector2D subtraction and assignment (-=)", "[geometry2d]") {
 
 TEST_CASE("Vector2D multiplication by scalar", "[geometry2d]") {
     const Vector2D v{1.0, 2.0};
-    
+
     SECTION("Vector * Scalar") {
         const auto res = v * 2.5;
         CHECK_THAT(res.x, Catch::Matchers::WithinAbs(2.5, 1e-12));
         CHECK_THAT(res.y, Catch::Matchers::WithinAbs(5.0, 1e-12));
     }
-    
+
     SECTION("Scalar * Vector") {
         const auto res = 2.5 * v;
         CHECK_THAT(res.x, Catch::Matchers::WithinAbs(2.5, 1e-12));

@@ -24,7 +24,7 @@ TEST_CASE("DiffDrive kinematics", "[diff_drive]") // Chenwan Zhong
         // Distance = r * phi = 0.033 * 1.0 = 0.033m
         robot.forward_kinematics({1.0, 1.0});
         const auto q = robot.configuration();
-        
+
         CHECK_THAT(q.translation().x, Catch::Matchers::WithinAbs(0.033, 1e-5));
         CHECK_THAT(q.translation().y, Catch::Matchers::WithinAbs(0.0, 1e-5));
         CHECK_THAT(q.rotation(), Catch::Matchers::WithinAbs(0.0, 1e-5));
@@ -35,7 +35,7 @@ TEST_CASE("DiffDrive kinematics", "[diff_drive]") // Chenwan Zhong
         // Expected wheel velocities = v/r = 0.033 / 0.033 = 1.0 rad/s
         Twist2D cmd{0.0, 0.033, 0.0};
         const auto wheel_vels = robot.inverse_kinematics(cmd);
-        
+
         CHECK_THAT(wheel_vels.left, Catch::Matchers::WithinAbs(1.0, 1e-5));
         CHECK_THAT(wheel_vels.right, Catch::Matchers::WithinAbs(1.0, 1e-5));
     }
@@ -45,7 +45,7 @@ TEST_CASE("DiffDrive kinematics", "[diff_drive]") // Chenwan Zhong
         // Delta theta = (r/D) * (dr - dl) = (0.033 / 0.16) * (1.0 - (-1.0)) = 0.4125 rad
         robot.forward_kinematics({-1.0, 1.0});
         const auto q = robot.configuration();
-        
+
         CHECK_THAT(q.translation().x, Catch::Matchers::WithinAbs(0.0, 1e-5));
         CHECK_THAT(q.translation().y, Catch::Matchers::WithinAbs(0.0, 1e-5));
         CHECK_THAT(q.rotation(), Catch::Matchers::WithinAbs(0.4125, 1e-5));
@@ -55,7 +55,7 @@ TEST_CASE("DiffDrive kinematics", "[diff_drive]") // Chenwan Zhong
         // Desired omega = 0.4125 rad/s, v_x = 0.0
         Twist2D cmd{0.4125, 0.0, 0.0};
         const auto wheel_vels = robot.inverse_kinematics(cmd);
-        
+
         CHECK_THAT(wheel_vels.left, Catch::Matchers::WithinAbs(-1.0, 1e-5));
         CHECK_THAT(wheel_vels.right, Catch::Matchers::WithinAbs(1.0, 1e-5));
     }
@@ -65,7 +65,7 @@ TEST_CASE("DiffDrive kinematics", "[diff_drive]") // Chenwan Zhong
         // This makes the robot follow an arc
         robot.forward_kinematics({0.0, 1.0});
         const auto q = robot.configuration();
-        
+
         // Detailed math:
         // d_theta = (0.033 / 0.16) * (1.0 - 0.0) = 0.20625 rad
         // d_x = (0.033 / 2.0) * (1.0 + 0.0) = 0.0165 m
@@ -81,7 +81,7 @@ TEST_CASE("DiffDrive kinematics", "[diff_drive]") // Chenwan Zhong
         // omega = v/R = 1.0 rad/s
         Twist2D cmd{1.0, 1.0, 0.0};
         const auto vels = robot.inverse_kinematics(cmd);
-        
+
         // Left: (1/r)*(v - D/2*w) = (1/0.033)*(1.0 - 0.08) = 0.92 / 0.033 = 27.8787
         // Right: (1/r)*(v + D/2*w) = (1/0.033)*(1.0 + 0.08) = 1.08 / 0.033 = 32.7272
         CHECK_THAT(vels.left, Catch::Matchers::WithinAbs(27.878787, 1e-4));

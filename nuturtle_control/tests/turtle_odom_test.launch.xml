@@ -1,0 +1,15 @@
+<launch>
+    <catch2_launch_file description='Odometry Test'/>
+
+    <node pkg="nuturtle_control" exec="odometry" name="odometry">
+        <param name="body_id" value="base_footprint" />
+        <param name="odom_id" value="odom" />
+        <param name="wheel_left" value="left_wheel_joint" />
+        <param name="wheel_right" value="right_wheel_joint" />
+        <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml" />
+    </node>
+
+    <catch2_integration_test_node pkg='nuturtle_control' exec='turtle_odom_test'>
+        <param name='test_duration' value='2.0'/>
+    </catch2_integration_test_node>
+</launch>

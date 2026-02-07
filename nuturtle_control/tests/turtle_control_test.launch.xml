@@ -1,0 +1,11 @@
+<launch>
+    <catch2_launch_file description='Integration test for turtle_control'/>
+    
+    <node pkg='nuturtle_control' exec='turtle_control' name='turtle_control'>
+        <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml" />
+    </node>
+
+    <catch2_integration_test_node pkg='nuturtle_control' exec='turtle_control_test'>
+        <param name='test_duration' value='2.0'/>
+    </catch2_integration_test_node>
+</launch>
