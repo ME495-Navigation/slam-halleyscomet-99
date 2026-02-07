@@ -53,7 +53,7 @@ public:
 
     // If scaling is 0.024 (rad/s per MCU), we need 41.66 (MCU per rad/s)
     if (motor_scaling_ < 1.0) {
-      RCLCPP_INFO(get_logger(), "Input scaling %f detected as rad/s per tick. Inverting...",
+      RCLCPP_DEBUG(get_logger(), "Input scaling %f detected as rad/s per tick. Inverting...",
                   motor_scaling_);
       motor_scaling_ = 1.0 / motor_scaling_;
     }
@@ -71,7 +71,7 @@ public:
     sensor_sub_ = create_subscription<nuturtlebot_msgs::msg::SensorData>(
       "sensor_data", 10, std::bind(&TurtleControl::sensor_callback, this, std::placeholders::_1));
 
-    RCLCPP_INFO(get_logger(), "Scaling factors: motor=%f, encoder=%f",
+    RCLCPP_DEBUG(get_logger(), "Scaling factors: motor=%f, encoder=%f",
                 motor_scaling_, encoder_scaling_);
     RCLCPP_INFO(get_logger(), "turtle_control node has been started.");
   }

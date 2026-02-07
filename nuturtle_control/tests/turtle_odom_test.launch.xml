@@ -1,6 +1,10 @@
 <launch>
     <catch2_launch_file description='Odometry Test'/>
 
+    <node pkg="joint_state_publisher" exec="joint_state_publisher" name="joint_state_publisher">
+        <remap from="joint_states" to="unused_joint_states"/>
+    </node>
+
     <node pkg="nuturtle_control" exec="odometry" name="odometry">
         <param name="body_id" value="base_footprint" />
         <param name="odom_id" value="odom" />
