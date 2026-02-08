@@ -76,7 +76,7 @@ target_link_libraries(circle
 install(TARGETS turtle_control odometry circle
   DESTINATION lib/${PROJECT_NAME})
 
-install(DIRECTORY srv DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY srv launch config DESTINATION share/${PROJECT_NAME})
 
 install(FILES
   tests/turtle_control_test.launch.xml

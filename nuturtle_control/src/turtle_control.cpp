@@ -38,6 +38,7 @@ public:
     declare_parameter("motor_cmd_max", rclcpp::PARAMETER_INTEGER);
     declare_parameter("motor_cmd_per_rad_sec", rclcpp::PARAMETER_DOUBLE);
     declare_parameter("encoder_ticks_per_rad", rclcpp::PARAMETER_DOUBLE);
+    declare_parameter("joint_prefix", "");
 
     // Retrieve parameter values
     const auto radius = get_parameter("wheel_radius").as_double();
@@ -45,18 +46,14 @@ public:
     motor_max_ = static_cast<int>(get_parameter("motor_cmd_max").as_int());
     motor_scaling_ = get_parameter("motor_cmd_per_rad_sec").as_double();
     encoder_scaling_ = get_parameter("encoder_ticks_per_rad").as_double();
+    joint_prefix_ = get_parameter("joint_prefix").as_string();
 
     // Ensure required parameters are loaded
     if (radius <= 0.0 || track <= 0.0 || motor_scaling_ <= 0.0) {
       RCLCPP_ERROR(get_logger(), "Invalid or missing parameters in diff_params.yaml!");
     }
 
-    // If scaling is 0.024 (rad/s per MCU), we need 41.66 (MCU per rad/s)
-    if (motor_scaling_ < 1.0) {
-      RCLCPP_DEBUG(get_logger(), "Input scaling %f detected as rad/s per tick. Inverting...",
-                  motor_scaling_);
-      motor_scaling_ = 1.0 / motor_scaling_;
-    }
+    motor_scaling_ = get_parameter("motor_cmd_per_rad_sec").as_double();
 
     // Initialize the kinematics model from turtlelib
     diff_robot_ = turtlelib::DiffDrive(track, radius);
@@ -90,10 +87,9 @@ private:
       // Convert rad/s to motor command units (mcu) using std::round to avoid truncation errors
       // and clamp to the maximum motor command allowed
       out.left_velocity = std::clamp(
-        static_cast<int>(std::round(vels.left * motor_scaling_)), -motor_max_, motor_max_);
+        static_cast<int>(std::round(vels.left / motor_scaling_)), -motor_max_, motor_max_);
       out.right_velocity = std::clamp(
-        static_cast<int>(std::round(vels.right * motor_scaling_)), -motor_max_, motor_max_);
-
+        static_cast<int>(std::round(vels.right / motor_scaling_)), -motor_max_, motor_max_);
       wheel_pub_->publish(out);
     } catch (const std::logic_error & e) {
       RCLCPP_DEBUG_STREAM(get_logger(), "Twist ignored: " << e.what());
@@ -110,7 +106,7 @@ private:
 
     sensor_msgs::msg::JointState js;
     js.header.stamp = msg->stamp;
-    js.name = {"left_wheel_joint", "right_wheel_joint"};
+    js.name = {joint_prefix_ + "wheel_left_joint", joint_prefix_ + "wheel_right_joint"};
     js.position = {l_pos, r_pos};
 
     // Publish joint states for visualization and odometry tracking
@@ -124,6 +120,7 @@ private:
   int motor_max_;
   double motor_scaling_;
   double encoder_scaling_;
+  std::string joint_prefix_;
   rclcpp::Publisher<nuturtlebot_msgs::msg::WheelCommands>::SharedPtr wheel_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;

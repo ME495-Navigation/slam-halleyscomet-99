@@ -22,21 +22,27 @@ find_package(visualization_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(nuturtle_description REQUIRED)
+find_package(nuturtlebot_msgs REQUIRED)
 find_package(turtlelib REQUIRED)
 
 # Define the main simulation node executable
 add_executable(nusimulator src/nusim.cpp)
 
+target_link_libraries(nusimulator PUBLIC
+      ${geometry_msgs_TARGETS}
+      ${nuturtlebot_msgs_TARGETS}
+      ${std_msgs_TARGETS}
+      ${std_srvs_TARGETS}
+      ${visualization_msgs_TARGETS}
+      rclcpp::rclcpp
+      tf2::tf2
+      tf2_ros::static_transform_broadcaster_node
+      tf2_ros::tf2_ros
+)
+
 target_link_libraries(nusimulator
   PUBLIC
-    rclcpp::rclcpp
-    tf2::tf2
-    tf2_ros::tf2_ros
     turtlelib::turtlelib
-    ${std_msgs_TARGETS}
-    ${std_srvs_TARGETS}
-    ${geometry_msgs_TARGETS}
-    ${visualization_msgs_TARGETS}
 )
 
 # Install the executable to the package's lib directory
