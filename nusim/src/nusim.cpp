@@ -15,10 +15,14 @@
 ///     encoder_ticks_per_rad (double): Ticks per radian for the encoders.
 ///     wheel_radius (double): Radius of the robot wheels [m].
 ///     track_width (double): Distance between wheels [m].
+///     laser_max_range (double): Max range of simulated laser (V.1).
 /// PUBLISHES:
 ///     ~/timestep (std_msgs::msg::UInt64): Current simulation timestep count.
 ///     ~/real_walls (visualization_msgs::msg::MarkerArray): Markers representing the arena walls.
 ///     ~/real_obstacles (visualization_msgs::msg::MarkerArray): Markers for cylindrical obstacles.
+///     ~/seen_obstacles (visualization_msgs::msg::MarkerArray): Yellow markers seen by the robot.
+///     ~/path (nav_msgs::msg::Path): Red path tracing the robot ground truth.
+///     ~/laser_scan (sensor_msgs::msg::LaserScan): Simulated laser scan data.
 ///     red/sensor_data (nuturtlebot_msgs::msg::SensorData): Simulated encoder readings.
 ///     red/joint_states (sensor_msgs::msg::JointState): The joint positions of the red robot.
 /// SUBSCRIBES:
@@ -31,6 +35,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cmath>
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/u_int64.hpp"
@@ -38,10 +43,13 @@
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 #include "nuturtlebot_msgs/msg/wheel_commands.hpp"
 #include "nuturtlebot_msgs/msg/sensor_data.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "turtlelib/diff_drive.hpp"
 
 using namespace std::chrono_literals;
@@ -64,6 +72,7 @@ public:
     declare_parameter("obstacles.x", std::vector<double>{});
     declare_parameter("obstacles.y", std::vector<double>{});
     declare_parameter("obstacles.r", 0.1);
+    declare_parameter("laser_max_range", 3.0);
 
     // Kinematics/Physics Parameters
     declare_parameter("motor_cmd_per_rad_sec", 0.024);
@@ -73,7 +82,8 @@ public:
 
     const auto obs_x = get_parameter("obstacles.x").as_double_array();
     const auto obs_y = get_parameter("obstacles.y").as_double_array();
-    const auto obs_r = get_parameter("obstacles.r").as_double();
+    obs_r_ = get_parameter("obstacles.r").as_double();
+    laser_max_range_ = get_parameter("laser_max_range").as_double();
     motor_scaling_ = get_parameter("motor_cmd_per_rad_sec").as_double();
     encoder_scaling_ = get_parameter("encoder_ticks_per_rad").as_double();
     const auto radius = get_parameter("wheel_radius").as_double();
@@ -91,13 +101,16 @@ public:
     obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
       "~/real_obstacles", latched_qos);
 
-    // Feed simulated hardware data to turtle_control
-    sensor_pub_ = create_publisher<nuturtlebot_msgs::msg::SensorData>("sensor_data", 10);
+    seen_obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+      "~/seen_obstacles", 10);
+    path_pub_ = create_publisher<nav_msgs::msg::Path>("~/path", 10);
+    
+    // Default QoS (Reliable) to fix the "Incompatible QoS" warning with default RViz settings
+    scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>("~/laser_scan", 10);
 
-    // Publish JointStates so robot_state_publisher can animate the wheels
+    sensor_pub_ = create_publisher<nuturtlebot_msgs::msg::SensorData>("sensor_data", 10);
     joint_pub_ = create_publisher<sensor_msgs::msg::JointState>("red/joint_states", 10);
 
-    // Subscribe to wheel commands from turtle_control
     wheel_sub_ = create_subscription<nuturtlebot_msgs::msg::WheelCommands>(
       "wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
 
@@ -109,6 +122,8 @@ public:
 
     // 4. Initialize Simulation State
     diff_robot_ = turtlelib::DiffDrive(track, radius);
+    path_msg_.header.frame_id = "nusim/world";
+
     reset_to_initial_pose();
 
     // 5. Timer Setup
@@ -119,21 +134,20 @@ public:
 
     // 6. Initial Visualization
     publish_walls();
-    publish_obstacles(obs_x, obs_y, obs_r);
+    publish_obstacles(obs_x, obs_y, obs_r_);
 
-    RCLCPP_INFO(get_logger(), "Nusimulator initialized.");
+    RCLCPP_INFO(get_logger(), "Nusimulator initialized with V.1 Visualization features.");
   }
 
 private:
-  /// \brief Callback for incoming wheel velocity commands in MCU units.
-  /// \param msg - The wheel command message containing MCU velocities.
+  /// \brief Callback for incoming wheel velocity commands.
   void wheel_cmd_callback(const nuturtlebot_msgs::msg::WheelCommands::SharedPtr msg)
   {
     left_wheel_vel_ = static_cast<double>(msg->left_velocity) * motor_scaling_;
     right_wheel_vel_ = static_cast<double>(msg->right_velocity) * motor_scaling_;
   }
 
-  /// \brief Resets robot to initial pose parameters and clears encoders/velocities.
+  /// \brief Resets robot to initial pose and clears telemetry.
   void reset_to_initial_pose()
   {
     const auto x = get_parameter("x0").as_double();
@@ -149,36 +163,65 @@ private:
     left_wheel_vel_ = 0.0;
     right_wheel_vel_ = 0.0;
     timestep_ = 0;
+    path_msg_.poses.clear();
   }
 
-  /// \brief Main loop: Updates physics, publishes sensor data, TF, and joint states.
+  /// \brief Main loop: Updates physics and publishes data in strict order (TF first).
   void timer_callback()
   {
     const auto current_time = get_clock()->now();
 
-    // 1. Update Physics (Euler integration of wheel positions)
+    // 1. Update Physics
     left_wheel_pos_ += left_wheel_vel_ * dt_;
     right_wheel_pos_ += right_wheel_vel_ * dt_;
-
-    // Update the kinematics model and get ground truth pose
     diff_robot_.forward_kinematics({left_wheel_pos_, right_wheel_pos_});
     current_pose_ = diff_robot_.configuration();
 
-    // 2. Publish SensorData (Ticks for turtle_control)
+    // 2. Publish TF (MUST be before Scan/Path/Markers to prevent RViz dropping messages)
+    publish_robot_state(current_time);
+
+    // 3. Publish Path (Red)
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.stamp = current_time;
+    ps.header.frame_id = "nusim/world";
+    ps.pose.position.x = current_pose_.translation().x;
+    ps.pose.position.y = current_pose_.translation().y;
+    tf2::Quaternion q;
+    q.setRPY(0, 0, current_pose_.rotation());
+    ps.pose.orientation.x = q.x();
+    ps.pose.orientation.y = q.y();
+    ps.pose.orientation.z = q.z();
+    ps.pose.orientation.w = q.w();
+    path_msg_.poses.push_back(ps);
+    path_msg_.header.stamp = current_time;
+    path_pub_->publish(path_msg_);
+
+    // 4. Publish Markers and Laser
+    publish_seen_markers(current_time);
+    publish_laser_scan(current_time);
+
+    // 5. Timestep
+    std_msgs::msg::UInt64 ts_msg;
+    ts_msg.data = timestep_;
+    timestep_pub_->publish(ts_msg);
+    timestep_++;
+  }
+
+  /// \brief Broadcasts Ground Truth TF and publishes sensor data.
+  void publish_robot_state(const rclcpp::Time & current_time)
+  {
     nuturtlebot_msgs::msg::SensorData sd;
     sd.stamp = current_time;
     sd.left_encoder = static_cast<int32_t>(left_wheel_pos_ * encoder_scaling_);
     sd.right_encoder = static_cast<int32_t>(right_wheel_pos_ * encoder_scaling_);
     sensor_pub_->publish(sd);
 
-    // 3. Publish JointState (Radian positions for robot_state_publisher)
     sensor_msgs::msg::JointState js;
     js.header.stamp = current_time;
     js.name = {"wheel_left_joint", "wheel_right_joint"};
     js.position = {left_wheel_pos_, right_wheel_pos_};
     joint_pub_->publish(js);
 
-    // 4. Broadcast Ground Truth TF (nusim/world -> red/base_footprint)
     geometry_msgs::msg::TransformStamped t;
     t.header.stamp = current_time;
     t.header.frame_id = "nusim/world";
@@ -193,14 +236,76 @@ private:
     t.transform.rotation.w = q.w();
     tf_broadcaster_->sendTransform(t);
 
-    // 5. Publish internal timestep count
-    std_msgs::msg::UInt64 ts_msg;
-    ts_msg.data = timestep_;
-    timestep_pub_->publish(ts_msg);
-    timestep_++;
+    geometry_msgs::msg::TransformStamped scan_tf;
+    scan_tf.header.stamp = current_time;
+    scan_tf.header.frame_id = "red/base_footprint";
+    scan_tf.child_frame_id = "red/base_scan";
+    scan_tf.transform.translation.x = 0.0;
+    scan_tf.transform.translation.y = 0.0;
+    scan_tf.transform.translation.z = 0.0;
+    scan_tf.transform.rotation.w = 1.0;
+    tf_broadcaster_->sendTransform(scan_tf);
   }
 
-  /// \brief Create and publish cylindrical markers for obstacles.
+  /// \brief Calculates relative marker positions and publishes seen ones as Yellow Markers.
+  void publish_seen_markers(const rclcpp::Time & current_time)
+  {
+    const auto obs_x = get_parameter("obstacles.x").as_double_array();
+    const auto obs_y = get_parameter("obstacles.y").as_double_array();
+    visualization_msgs::msg::MarkerArray seen_ma;
+
+    for (size_t i = 0; i < obs_x.size(); ++i) {
+      double dx = obs_x[i] - current_pose_.translation().x;
+      double dy = obs_y[i] - current_pose_.translation().y;
+      double dist = std::sqrt(dx*dx + dy*dy);
+
+      if (dist <= laser_max_range_) {
+        visualization_msgs::msg::Marker m;
+        m.header.frame_id = "red/base_footprint";
+        m.header.stamp = current_time;
+        m.ns = "seen_markers";
+        m.id = static_cast<int>(i);
+        m.type = visualization_msgs::msg::Marker::CYLINDER;
+        m.action = visualization_msgs::msg::Marker::ADD;
+
+        double th = current_pose_.rotation();
+        m.pose.position.x = dx * std::cos(th) + dy * std::sin(th);
+        m.pose.position.y = -dx * std::sin(th) + dy * std::cos(th);
+        m.pose.position.z = 0.125;
+
+        m.scale.x = 2.0 * obs_r_;
+        m.scale.y = 2.0 * obs_r_;
+        m.scale.z = 0.25;
+
+        m.color.r = 1.0; m.color.g = 1.0; m.color.b = 0.0; m.color.a = 1.0;
+        m.lifetime = rclcpp::Duration::from_seconds(0.1);
+        seen_ma.markers.push_back(m);
+      } 
+    }
+    seen_obs_pub_->publish(seen_ma);
+  }
+
+  /// \brief Publishes a simulated laser scan centered on the robot.
+  void publish_laser_scan(const rclcpp::Time & current_time)
+  {
+    sensor_msgs::msg::LaserScan scan;
+    scan.header.stamp = current_time;
+    scan.header.frame_id = "red/base_scan";
+    scan.angle_min = 0.0;
+    scan.angle_max = 2.0 * M_PI;
+    scan.angle_increment = M_PI / 180.0;
+    scan.time_increment = 0.0;
+    scan.scan_time = dt_;
+    scan.range_min = 0.12;
+    scan.range_max = laser_max_range_;
+
+    size_t num_readings = 360;
+    scan.ranges.assign(num_readings, laser_max_range_ - 0.01);
+    scan.intensities.assign(num_readings, 1.0);
+    scan_pub_->publish(scan);
+  }
+
+  /// \brief Create and publish ground truth red markers for obstacles.
   void publish_obstacles(const std::vector<double> & x, const std::vector<double> & y, double r)
   {
     visualization_msgs::msg::MarkerArray ma;
@@ -224,7 +329,7 @@ private:
     obs_pub_->publish(ma);
   }
 
-  /// \brief Create and publish markers for arena boundaries.
+  /// \brief Publishes arena boundaries as red walls.
   void publish_walls()
   {
     const auto x_len = get_parameter("arena_x_length").as_double();
@@ -240,11 +345,11 @@ private:
       m.ns = "walls";
       m.id = i;
       m.type = visualization_msgs::msg::Marker::CUBE;
-      if (i < 2) { // North/South walls
+      if (i < 2) { 
         m.pose.position.x = (i == 0) ? x_len / 2.0 + thick / 2.0 : -x_len / 2.0 - thick / 2.0;
         m.scale.x = thick;
         m.scale.y = y_len + 2.0 * thick;
-      } else { // East/West walls
+      } else { 
         m.pose.position.y = (i == 2) ? y_len / 2.0 + thick / 2.0 : -y_len / 2.0 - thick / 2.0;
         m.scale.x = x_len + 2.0 * thick;
         m.scale.y = thick;
@@ -257,7 +362,7 @@ private:
     wall_pub_->publish(ma);
   }
 
-  /// \brief Service callback to reset the simulation state.
+  /// \brief Resets simulation state to initial configuration.
   void reset_callback(
     const std::shared_ptr<std_srvs::srv::Empty::Request>,
     std::shared_ptr<std_srvs::srv::Empty::Response>)
@@ -266,24 +371,33 @@ private:
     publish_walls();
     const auto ox = get_parameter("obstacles.x").as_double_array();
     const auto oy = get_parameter("obstacles.y").as_double_array();
-    const auto orad = get_parameter("obstacles.r").as_double();
-    publish_obstacles(ox, oy, orad);
+    publish_obstacles(ox, oy, obs_r_);
+
+    visualization_msgs::msg::MarkerArray delete_ma;
+    visualization_msgs::msg::Marker delete_marker;
+    delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+    delete_ma.markers.push_back(delete_marker);
+    seen_obs_pub_->publish(delete_ma);
+    
     RCLCPP_INFO(get_logger(), "Simulation Reset.");
   }
 
+  // Member variables
   uint64_t timestep_;
-  double dt_;
+  double dt_, obs_r_, laser_max_range_;
   double motor_scaling_, encoder_scaling_;
   double left_wheel_pos_ = 0.0, right_wheel_pos_ = 0.0;
   double left_wheel_vel_ = 0.0, right_wheel_vel_ = 0.0;
 
   turtlelib::Transform2D current_pose_;
   turtlelib::DiffDrive diff_robot_{0.0, 0.0};
+  nav_msgs::msg::Path path_msg_;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr timestep_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr wall_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr obs_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr wall_pub_, obs_pub_, seen_obs_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
   rclcpp::Publisher<nuturtlebot_msgs::msg::SensorData>::SharedPtr sensor_pub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
   rclcpp::Subscription<nuturtlebot_msgs::msg::WheelCommands>::SharedPtr wheel_sub_;
@@ -291,7 +405,6 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
-/// \brief Entry point for the nusimulator node.
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);

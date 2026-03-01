@@ -24,6 +24,8 @@ find_package(tf2_ros REQUIRED)
 find_package(nuturtle_description REQUIRED)
 find_package(nuturtlebot_msgs REQUIRED)
 find_package(turtlelib REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 # Define the main simulation node executable
 add_executable(nusimulator src/nusim.cpp)
@@ -34,6 +36,8 @@ target_link_libraries(nusimulator PUBLIC
       ${std_msgs_TARGETS}
       ${std_srvs_TARGETS}
       ${visualization_msgs_TARGETS}
+      ${nav_msgs_TARGETS}
+      ${sensor_msgs_TARGETS}
       rclcpp::rclcpp
       tf2::tf2
       tf2_ros::static_transform_broadcaster_node
