@@ -19,6 +19,9 @@
 ///     draw_only (bool): If true, only draw landmarks and walls, no simulation.
 ///     input_noise (double): Variance of the zero-mean Gaussian noise on motor commands.
 ///     slip_fraction (double): Range of the uniform random fraction for wheel slip.
+///     basic_sensor_variance (double): Variance of Gaussian noise on relative obstacle positions.
+///     max_range (double): Maximum range of the fake sensor [m].
+///     collision_radius (double): Radius used for robot-obstacle collision detection [m].
 /// PUBLISHES:
 ///     ~/timestep (std_msgs::msg::UInt64): Current simulation timestep count.
 ///     ~/real_walls (visualization_msgs::msg::MarkerArray): Markers representing the arena walls.
@@ -28,6 +31,7 @@
 ///     ~/laser_scan (sensor_msgs::msg::LaserScan): Simulated laser scan data.
 ///     red/sensor_data (nuturtlebot_msgs::msg::SensorData): Simulated encoder readings.
 ///     red/joint_states (sensor_msgs::msg::JointState): The joint positions of the red robot.
+///     /fake_sensor (visualization_msgs::msg::MarkerArray): Relative markers with noise.
 /// SUBSCRIBES:
 ///     red/wheel_cmd (nuturtlebot_msgs::msg::WheelCommands): Commands to set wheel velocities.
 /// SERVERS:
@@ -90,6 +94,7 @@ public:
     declare_parameter("track_width", 0.16);
     declare_parameter("basic_sensor_variance", 0.0);
     declare_parameter("max_range", 3.0);
+    declare_parameter("collision_radius", 0.0);
 
     obs_r_ = get_parameter("obstacles.r").as_double();
     laser_max_range_ = get_parameter("laser_max_range").as_double();
@@ -102,6 +107,7 @@ public:
     slip_fraction_ = get_parameter("slip_fraction").as_double();
     basic_sensor_variance_ = get_parameter("basic_sensor_variance").as_double();
     max_range_ = get_parameter("max_range").as_double();
+    collision_radius_ = get_parameter("collision_radius").as_double();
 
     // Initialize sensor noise distribution
     sensor_dist_ = std::normal_distribution<double>(0.0, std::sqrt(basic_sensor_variance_));
@@ -136,7 +142,7 @@ public:
       sensor_timer_ = create_wall_timer(200ms, std::bind(&Nusimulator::sensor_timer_callback, this));
 
       wheel_sub_ = create_subscription<nuturtlebot_msgs::msg::WheelCommands>(
-        "wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
+        "red/wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
 
       tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
       reset_srv_ = create_service<std_srvs::srv::Empty>(
@@ -220,53 +226,111 @@ private:
     u_r_cmd_ = static_cast<double>(msg->right_velocity) * motor_scaling_;
   }
 
-  /// \brief Main loop: Computes unique noise/slip per frame and updates physics.
+  /// \brief Main loop: Updates physics layer (red) and sensor layer (blue) independently.
   void timer_callback()
   {
     const auto current_time = get_clock()->now();
-    
-    // Step 2 & 3: Compute v_i = u_i + w_i (Gaussian noise per frame)
+
+    // --- 1. Compute frame-specific noise and physical velocities ---
     auto get_v_sensor = [&](double u) {
-      if (std::abs(u) < 1e-6) return 0.0; // motors at rest remain at rest
-      return u + gaussian_dist_(rng_); // unique noise for this wheel this frame
+      if (std::abs(u) < 1e-6) return 0.0;
+      return u + gaussian_dist_(rng_);
     };
 
     v_l_sensor_ = get_v_sensor(u_l_cmd_);
     v_r_sensor_ = get_v_sensor(u_r_cmd_);
-
-    // Step 4: Compute physical velocity with slip (Uniform slip per frame)
     v_l_physics_ = v_l_sensor_ * (1.0 + slip_dist_(rng_));
     v_r_physics_ = v_r_sensor_ * (1.0 + slip_dist_(rng_));
 
-    // 1. Update Physics Layer (Ground Truth - With Slip)
+    // --- 2. Update Physics Layer (Red Robot) ---
+    // Use cumulative wheel positions to drive the FK.
     left_wheel_pos_ += v_l_physics_ * dt_;
     right_wheel_pos_ += v_r_physics_ * dt_;
+    
+    // Perform Forward Kinematics using the cumulative positions
     diff_robot_.forward_kinematics({left_wheel_pos_, right_wheel_pos_});
     current_pose_ = diff_robot_.configuration();
 
-    // 2. Update Sensor Layer (Encoder reading - Without Slip)
+    // --- 3. Collision Detection ---
+    const auto ox = get_parameter("obstacles.x").as_double_array();
+    const auto oy = get_parameter("obstacles.y").as_double_array();
+
+    for (size_t i = 0; i < ox.size(); ++i) {
+      double dx = current_pose_.translation().x - ox[i];
+      double dy = current_pose_.translation().y - oy[i];
+      double distance = std::sqrt(dx * dx + dy * dy);
+      double min_dist = collision_radius_ + obs_r_;
+
+      if (distance < min_dist && distance > 1e-9) {
+        // Calculate the unit vector and the tangent point
+        double unit_x = dx / distance;
+        double unit_y = dy / distance;
+        double fixed_x = ox[i] + unit_x * min_dist;
+        double fixed_y = oy[i] + unit_y * min_dist;
+
+        // Force current_pose_ to the boundary for TF publishing
+        current_pose_ = turtlelib::Transform2D({fixed_x, fixed_y}, current_pose_.rotation());
+        
+        diff_robot_ = turtlelib::DiffDrive(
+            diff_robot_.track_width(), 
+            diff_robot_.wheel_radius(), 
+            current_pose_);
+            
+        // Reset physics tracking variables to 0 because the new diff_robot_ starts at 0
+        left_wheel_pos_ = 0.0;
+        right_wheel_pos_ = 0.0;
+
+        break; 
+      }
+    }
+
+    // --- 4. Wall Collision Detection ---
+    const auto x_len = get_parameter("arena_x_length").as_double();
+    const auto y_len = get_parameter("arena_y_length").as_double();
+
+    // Define the effective boundaries considering the collision radius
+    const double x_max = x_len / 2.0 - collision_radius_;
+    const double x_min = -x_len / 2.0 + collision_radius_;
+    const double y_max = y_len / 2.0 - collision_radius_;
+    const double y_min = -y_len / 2.0 + collision_radius_;
+
+    auto p = current_pose_.translation();
+    bool wall_hit = false;
+
+    // Check and correct for wall collisions, pushing the robot back to the boundary if it exceeds limits
+    if (p.x > x_max) { p.x = x_max; wall_hit = true; }
+    if (p.x < x_min) { p.x = x_min; wall_hit = true; }
+    if (p.y > y_max) { p.y = y_max; wall_hit = true; }
+    if (p.y < y_min) { p.y = y_min; wall_hit = true; }
+
+    if (wall_hit) {
+      // Update current_pose_ to the corrected position while keeping the same orientation
+      current_pose_ = turtlelib::Transform2D({p.x, p.y}, current_pose_.rotation());
+      
+      diff_robot_ = turtlelib::DiffDrive(
+          diff_robot_.track_width(), 
+          diff_robot_.wheel_radius(), 
+          current_pose_);
+          
+      left_wheel_pos_ = 0.0;
+      right_wheel_pos_ = 0.0;
+    }
+
+    // --- 5. Sensor Layer (Blue Robot / Odometry) ---
+    // Encoders are never reset by physics collisions, simulating wheel spin
     left_encoder_pos_ += v_l_sensor_ * dt_;
     right_encoder_pos_ += v_r_sensor_ * dt_;
 
-    // 3. Publish Robot State and TF
+    // --- 6. Publishing ---
     publish_robot_state(current_time);
-
-    // 4. Publish Visualization
     publish_path(current_time);
     publish_seen_markers(current_time);
     publish_laser_scan(current_time);
     
     if (timestep_ % 50 == 0) {
       publish_walls();
-      const auto ox = get_parameter("obstacles.x").as_double_array();
-      const auto oy = get_parameter("obstacles.y").as_double_array();
       publish_obstacles(ox, oy, obs_r_);
     }
-
-    // 5. Timestep
-    std_msgs::msg::UInt64 ts_msg;
-    ts_msg.data = timestep_;
-    timestep_pub_->publish(ts_msg);
     timestep_++;
   }
 
@@ -290,6 +354,8 @@ private:
     path_msg_.poses.clear();
   }
 
+  /// \brief Publishes the ground truth trajectory of the red robot in the world frame.
+  /// \param current_time The timestamp for the path message header.
   void publish_path(const rclcpp::Time & current_time)
   {
     geometry_msgs::msg::PoseStamped ps;
@@ -308,6 +374,8 @@ private:
     path_pub_->publish(path_msg_);
   }
 
+  /// \brief Updates and broadcasts the robot's TF transforms and JointStates.
+  /// \param current_time The timestamp for the transform and sensor data.
   void publish_robot_state(const rclcpp::Time & current_time)
   {
     nuturtlebot_msgs::msg::SensorData sd;
@@ -454,38 +522,120 @@ private:
     RCLCPP_INFO(get_logger(), "Simulation Reset.");
   }
 
-  // Member variables
+  // --- Private Member Variables ---
+
+  /// \brief Current simulation timestep count
   uint64_t timestep_;
-  double dt_, obs_r_, laser_max_range_;
-  double motor_scaling_, encoder_scaling_;
-  double left_wheel_pos_, right_wheel_pos_, left_encoder_pos_, right_encoder_pos_;
-  double u_l_cmd_, u_r_cmd_, v_l_physics_, v_r_physics_, v_l_sensor_, v_r_sensor_;
+
+  /// \brief Time step for the simulation loop [s]
+  double dt_;
+
+  /// \brief Radius of cylindrical obstacles [m]
+  double obs_r_;
+
+  /// \brief Maximum range of the robot's laser scanner [m]
+  double laser_max_range_;
+
+  /// \brief Scaling factor for motor commands (cmd to rad/sec)
+  double motor_scaling_;
+
+  /// \brief Scaling factor for encoders (rad to ticks)
+  double encoder_scaling_;
+
+  /// \brief Cumulative wheel positions for the physics layer [rad]
+  double left_wheel_pos_, right_wheel_pos_;
+
+  /// \brief Cumulative encoder positions for the sensor layer [rad]
+  double left_encoder_pos_, right_encoder_pos_;
+
+  /// \brief Last received raw wheel velocity commands [rad/s]
+  double u_l_cmd_, u_r_cmd_;
+
+  /// \brief Actual wheel velocities including noise and slip [rad/s]
+  double v_l_physics_, v_r_physics_;
+
+  /// \brief Commanded wheel velocities including only noise [rad/s]
+  double v_l_sensor_, v_r_sensor_;
+
+  /// \brief Flag to determine if the node only performs visualization
   bool draw_only_;
-  double input_noise_, slip_fraction_;
+
+  /// \brief Variance of the zero-mean Gaussian noise on motor commands
+  double input_noise_;
+
+  /// \brief Range of the uniform random fraction for wheel slip
+  double slip_fraction_;
+
+  /// \brief Variance of Gaussian noise for the fake sensor relative positions
   double basic_sensor_variance_;
+
+  /// \brief Maximum range for the fake sensor detection [m]
   double max_range_;
 
+  /// \brief Radius used for robot-obstacle collision detection [m]
+  double collision_radius_;
+
+  // --- Randomness and Noise Distributions ---
+
+  /// \brief Normal distribution for basic sensor noise
   std::normal_distribution<double> sensor_dist_;
+
+  /// \brief Timer for the 5Hz fake sensor publishing
   rclcpp::TimerBase::SharedPtr sensor_timer_;
+
+  /// \brief Publisher for fake relative sensor markers (Task C.10)
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr fake_sensor_pub_;
 
+  // --- Kinematics and State ---
+
+  /// \brief The current ground truth pose of the simulated robot
   turtlelib::Transform2D current_pose_;
+
+  /// \brief Differential drive kinematic model for the robot
   turtlelib::DiffDrive diff_robot_{0.0, 0.0};
+
+  /// \brief Message containing the ground truth path of the robot
   nav_msgs::msg::Path path_msg_;
 
+  /// \brief Random number engine for noise generation
   std::default_random_engine rng_;
+
+  /// \brief Normal distribution for motor command noise
   std::normal_distribution<double> gaussian_dist_;
+
+  /// \brief Uniform distribution for simulating wheel slip
   std::uniform_real_distribution<double> slip_dist_;
 
+  // --- ROS 2 Interfaces ---
+
+  /// \brief Broadcaster for TF transforms (world -> red/base_footprint)
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+
+  /// \brief Publisher for the simulation timestep
   rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr timestep_pub_;
+
+  /// \brief Publisher for arena elements (walls and obstacles)
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr wall_pub_, obs_pub_, seen_obs_pub_;
+
+  /// \brief Publisher for the ground truth robot path
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+
+  /// \brief Publisher for simulated laser scan data
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
+
+  /// \brief Publisher for simulated encoder data (Task C.9)
   rclcpp::Publisher<nuturtlebot_msgs::msg::SensorData>::SharedPtr sensor_pub_;
+
+  /// \brief Publisher for joint states used in visualization
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
+
+  /// \brief Subscriber for incoming wheel velocity commands
   rclcpp::Subscription<nuturtlebot_msgs::msg::WheelCommands>::SharedPtr wheel_sub_;
+
+  /// \brief Service server to reset the simulation state
   rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reset_srv_;
+
+  /// \brief Main simulation loop timer (at specified rate)
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
