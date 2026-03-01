@@ -10,6 +10,7 @@
 ///     track_width (double): The distance between the wheels.
 /// PUBLISHES:
 ///     odom (nav_msgs::msg::Odometry): The robot's estimated pose and velocity.
+///     ~/path (nav_msgs::msg::Path): The path the robot has taken according to odometry (Blue).
 ///     /tf (tf2_msgs::msg::TFMessage): The transform from odom_id to body_id.
 /// SUBSCRIBES:
 ///     joint_states (sensor_msgs::msg::JointState): The positions of the wheels.
@@ -22,7 +23,9 @@
 #include <algorithm>
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2/LinearMath/Quaternion.h"
 #include "turtlelib/diff_drive.hpp"
@@ -61,6 +64,10 @@ public:
     // 2. Initialize ROS interfaces
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+    
+    // Initialize Path Publisher
+    path_pub_ = create_publisher<nav_msgs::msg::Path>("~/path", 10);
+    path_msg_.header.frame_id = odom_id_;
 
     joint_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "joint_states", 10, std::bind(&OdometryNode::joint_callback, this, std::placeholders::_1));
@@ -71,7 +78,7 @@ public:
         &OdometryNode::initial_pose_callback, this,
         std::placeholders::_1, std::placeholders::_2));
 
-    RCLCPP_INFO_STREAM(get_logger(), "Odometry node initialized.");
+    RCLCPP_INFO_STREAM(get_logger(), "Odometry node initialized with Path visualization.");
   }
 
 private:
@@ -92,16 +99,26 @@ private:
     }
 
     if (left_idx != -1 && right_idx != -1) {
-      // Update internal model (Forward Kinematics)
+      double left_pos = msg->position.at(left_idx);
+      double right_pos = msg->position.at(right_idx);
+
+      // If this is the first update or after a reset, record the current position as offset
+      if (sync_wheels_) {
+        left_offset_ = left_pos;
+        right_offset_ = right_pos;
+        sync_wheels_ = false;
+      }
+
+      // Update internal model using positions relative to the reset/start point
       diff_robot_.forward_kinematics(
-        {msg->position.at(left_idx),
-          msg->position.at(right_idx)});
+        {left_pos - left_offset_,
+          right_pos - right_offset_});
 
       publish_odom(msg->header.stamp);
     }
   }
 
-  /// \brief Broadcasts TF and publishes the Odometry message.
+  /// \brief Broadcasts TF, publishes Odometry and Path messages.
   /// \param stamp - The timestamp for the messages.
   void publish_odom(const rclcpp::Time & stamp)
   {
@@ -130,8 +147,6 @@ private:
     odom.header.stamp = stamp;
     odom.header.frame_id = odom_id_;
     odom.child_frame_id = body_id_;
-
-    // Pose in odom frame
     odom.pose.pose.position.x = q.translation().x;
     odom.pose.pose.position.y = q.translation().y;
     odom.pose.pose.position.z = 0.0;
@@ -139,32 +154,54 @@ private:
     odom.pose.pose.orientation.y = quat.y();
     odom.pose.pose.orientation.z = quat.z();
     odom.pose.pose.orientation.w = quat.w();
-
-    // Twist is defined in the body frame
     odom_pub_->publish(odom);
+
+    // 4. Update and Publish Path (Blue Path)
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.stamp = stamp;
+    ps.header.frame_id = odom_id_;
+    ps.pose = odom.pose.pose;
+    path_msg_.poses.push_back(ps);
+    path_msg_.header.stamp = stamp;
+    path_pub_->publish(path_msg_);
   }
 
-  /// \brief Resets the robot's configuration via service.
+  /// \brief Resets the robot's configuration via service and clears the path.
   /// \param request - The desired x, y, theta.
   void initial_pose_callback(
     const std::shared_ptr<nuturtle_control::srv::InitialPose::Request> request,
     std::shared_ptr<nuturtle_control::srv::InitialPose::Response>)
   {
+    // Reset the kinematic model to the new starting pose
     diff_robot_ = turtlelib::DiffDrive(
       diff_robot_.track_width(),
       diff_robot_.wheel_radius(),
       turtlelib::Transform2D({request->x, request->y}, request->theta)
     );
-    RCLCPP_INFO_STREAM(get_logger(), "Odometry reset to requested configuration.");
+    
+    // Set flag to sync wheel offsets on next joint_state message
+    sync_wheels_ = true;
+
+    // Clear the path when resetting pose
+    path_msg_.poses.clear();
+    
+    RCLCPP_INFO_STREAM(get_logger(), "Odometry and Path reset. Waiting for next joint_state to sync wheels.");
   }
 
   // Member variables
   std::string body_id_, odom_id_, wheel_left_name_, wheel_right_name_;
-  turtlelib::DiffDrive diff_robot_;
+  turtlelib::DiffDrive diff_robot_{0.16, 0.033};
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+  nav_msgs::msg::Path path_msg_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub_;
   rclcpp::Service<nuturtle_control::srv::InitialPose>::SharedPtr initial_pose_srv_;
+
+  // Synchronization variables
+  double left_offset_ = 0.0;
+  double right_offset_ = 0.0;
+  bool sync_wheels_ = true;
 };
 }  // namespace nuturtle_control
 

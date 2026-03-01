@@ -49,6 +49,8 @@
       <param name="wheel_left" value="wheel_left_joint" />
       <param name="wheel_right" value="wheel_right_joint" />
       <remap from="joint_states" to="red/joint_states" />
+      <remap from="odom" to="blue/odom" />
+      <remap from="~/path" to="blue/path" />
     </node>
 
     <node pkg="nuturtle_control" exec="turtle_control" name="turtle_control">
