@@ -17,6 +17,8 @@
 ///     track_width (double): Distance between wheels [m].
 ///     laser_max_range (double): Max range of simulated laser.
 ///     draw_only (bool): If true, only draw landmarks and walls, no simulation.
+///     input_noise (double): Variance of the zero-mean Gaussian noise on motor commands.
+///     slip_fraction (double): Range of the uniform random fraction for wheel slip.
 /// PUBLISHES:
 ///     ~/timestep (std_msgs::msg::UInt64): Current simulation timestep count.
 ///     ~/real_walls (visualization_msgs::msg::MarkerArray): Markers representing the arena walls.
@@ -37,6 +39,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <random>
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/u_int64.hpp"
@@ -76,6 +79,10 @@ public:
     declare_parameter("laser_max_range", 3.0);
     declare_parameter("draw_only", false);
 
+    // C.9 Noise Parameters
+    declare_parameter("input_noise", 0.0);
+    declare_parameter("slip_fraction", 0.0);
+
     // Kinematics/Physics Parameters
     declare_parameter("motor_cmd_per_rad_sec", 0.024);
     declare_parameter("encoder_ticks_per_rad", 651.47);
@@ -89,20 +96,25 @@ public:
     const auto radius = get_parameter("wheel_radius").as_double();
     const auto track = get_parameter("track_width").as_double();
     draw_only_ = get_parameter("draw_only").as_bool();
+    input_noise_ = get_parameter("input_noise").as_double();
+    slip_fraction_ = get_parameter("slip_fraction").as_double();
 
-    // 2. Setup Publishers (Landmarks are always needed)
+    // Initialize Random Engine and Distributions
+    rng_.seed(std::random_device{}());
+    gaussian_dist_ = std::normal_distribution<double>(0.0, std::sqrt(input_noise_));
+    slip_dist_ = std::uniform_real_distribution<double>(-slip_fraction_, slip_fraction_);
+
+    // 2. Setup Publishers
     auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local();
     wall_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/real_walls", latched_qos);
     obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
       "~/real_obstacles", latched_qos);
 
-    // 3. Conditional Setup based on Mode
+    // 3. Conditional Setup
     if (draw_only_) {
-      // In draw_only mode (nuwalls), we only need a slow timer for landmarks
       timer_ = create_wall_timer(500ms, std::bind(&Nusimulator::draw_only_timer_callback, this));
       RCLCPP_INFO(get_logger(), "Nusimulator started in DRAW_ONLY mode (nuwalls).");
     } else {
-      // Normal Simulation Setup
       timestep_pub_ = create_publisher<std_msgs::msg::UInt64>("~/timestep", 10);
       seen_obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
         "~/seen_obstacles", 10);
@@ -127,8 +139,6 @@ public:
       dt_ = 1.0 / static_cast<double>(rate_val);
       const auto period = std::chrono::milliseconds(static_cast<int>(1000.0 * dt_));
       timer_ = create_wall_timer(period, std::bind(&Nusimulator::timer_callback, this));
-      
-      RCLCPP_INFO(get_logger(), "Nusimulator started in SIMULATION mode (nusim).");
     }
   }
 
@@ -142,11 +152,65 @@ private:
     publish_obstacles(ox, oy, obs_r_);
   }
 
-  /// \brief Callback for incoming wheel velocity commands.
+  /// \brief Callback for wheel commands: Stores raw commands for the main loop.
   void wheel_cmd_callback(const nuturtlebot_msgs::msg::WheelCommands::SharedPtr msg)
   {
-    left_wheel_vel_ = static_cast<double>(msg->left_velocity) * motor_scaling_;
-    right_wheel_vel_ = static_cast<double>(msg->right_velocity) * motor_scaling_;
+    u_l_cmd_ = static_cast<double>(msg->left_velocity) * motor_scaling_;
+    u_r_cmd_ = static_cast<double>(msg->right_velocity) * motor_scaling_;
+  }
+
+  /// \brief Main loop: Computes unique noise/slip per frame and updates physics.
+  void timer_callback()
+  {
+    const auto current_time = get_clock()->now();
+
+    // --- Task C.9 Logic: Apply Noise and Slip EVERY FRAME ---
+    
+    // Step 2 & 3: Compute v_i = u_i + w_i (Gaussian noise per frame)
+    auto get_v_sensor = [&](double u) {
+      if (std::abs(u) < 1e-6) return 0.0; // motors at rest remain at rest
+      return u + gaussian_dist_(rng_); // unique noise for this wheel this frame
+    };
+
+    v_l_sensor_ = get_v_sensor(u_l_cmd_);
+    v_r_sensor_ = get_v_sensor(u_r_cmd_);
+
+    // Step 4: Compute physical velocity with slip (Uniform slip per frame)
+    v_l_physics_ = v_l_sensor_ * (1.0 + slip_dist_(rng_));
+    v_r_physics_ = v_r_sensor_ * (1.0 + slip_dist_(rng_));
+
+    // --- End Task C.9 Logic ---
+
+    // 1. Update Physics Layer (Ground Truth - With Slip)
+    left_wheel_pos_ += v_l_physics_ * dt_;
+    right_wheel_pos_ += v_r_physics_ * dt_;
+    diff_robot_.forward_kinematics({left_wheel_pos_, right_wheel_pos_});
+    current_pose_ = diff_robot_.configuration();
+
+    // 2. Update Sensor Layer (Encoder reading - Without Slip)
+    left_encoder_pos_ += v_l_sensor_ * dt_;
+    right_encoder_pos_ += v_r_sensor_ * dt_;
+
+    // 3. Publish Robot State and TF
+    publish_robot_state(current_time);
+
+    // 4. Publish Visualization
+    publish_path(current_time);
+    publish_seen_markers(current_time);
+    publish_laser_scan(current_time);
+    
+    if (timestep_ % 50 == 0) {
+      publish_walls();
+      const auto ox = get_parameter("obstacles.x").as_double_array();
+      const auto oy = get_parameter("obstacles.y").as_double_array();
+      publish_obstacles(ox, oy, obs_r_);
+    }
+
+    // 5. Timestep
+    std_msgs::msg::UInt64 ts_msg;
+    ts_msg.data = timestep_;
+    timestep_pub_->publish(ts_msg);
+    timestep_++;
   }
 
   /// \brief Resets robot to initial pose and clears telemetry.
@@ -160,46 +224,13 @@ private:
     diff_robot_ = turtlelib::DiffDrive(
       diff_robot_.track_width(), diff_robot_.wheel_radius(), current_pose_);
 
-    left_wheel_pos_ = 0.0;
-    right_wheel_pos_ = 0.0;
-    left_wheel_vel_ = 0.0;
-    right_wheel_vel_ = 0.0;
+    left_wheel_pos_ = 0.0; right_wheel_pos_ = 0.0;
+    left_encoder_pos_ = 0.0; right_encoder_pos_ = 0.0;
+    u_l_cmd_ = 0.0; u_r_cmd_ = 0.0;
+    v_l_physics_ = 0.0; v_r_physics_ = 0.0;
+    v_l_sensor_ = 0.0; v_r_sensor_ = 0.0;
     timestep_ = 0;
     path_msg_.poses.clear();
-  }
-
-  /// \brief Main loop: Updates physics and publishes data in strict order (TF first).
-  void timer_callback()
-  {
-    const auto current_time = get_clock()->now();
-
-    // 1. Update Physics
-    left_wheel_pos_ += left_wheel_vel_ * dt_;
-    right_wheel_pos_ += right_wheel_vel_ * dt_;
-    diff_robot_.forward_kinematics({left_wheel_pos_, right_wheel_pos_});
-    current_pose_ = diff_robot_.configuration();
-
-    // 2. Publish Robot State and TF
-    publish_robot_state(current_time);
-
-    // 3. Publish Visualization
-    publish_path(current_time);
-    publish_seen_markers(current_time);
-    publish_laser_scan(current_time);
-    
-    // Publish Landmarks occasionally even in sim
-    if (timestep_ % 50 == 0) {
-      publish_walls();
-      const auto ox = get_parameter("obstacles.x").as_double_array();
-      const auto oy = get_parameter("obstacles.y").as_double_array();
-      publish_obstacles(ox, oy, obs_r_);
-    }
-
-    // 4. Timestep
-    std_msgs::msg::UInt64 ts_msg;
-    ts_msg.data = timestep_;
-    timestep_pub_->publish(ts_msg);
-    timestep_++;
   }
 
   void publish_path(const rclcpp::Time & current_time)
@@ -220,19 +251,18 @@ private:
     path_pub_->publish(path_msg_);
   }
 
-  /// \brief Broadcasts Ground Truth TF and publishes sensor data.
   void publish_robot_state(const rclcpp::Time & current_time)
   {
     nuturtlebot_msgs::msg::SensorData sd;
     sd.stamp = current_time;
-    sd.left_encoder = static_cast<int32_t>(left_wheel_pos_ * encoder_scaling_);
-    sd.right_encoder = static_cast<int32_t>(right_wheel_pos_ * encoder_scaling_);
+    sd.left_encoder = static_cast<int32_t>(left_encoder_pos_ * encoder_scaling_);
+    sd.right_encoder = static_cast<int32_t>(right_encoder_pos_ * encoder_scaling_);
     sensor_pub_->publish(sd);
 
     sensor_msgs::msg::JointState js;
     js.header.stamp = current_time;
     js.name = {"wheel_left_joint", "wheel_right_joint"};
-    js.position = {left_wheel_pos_, right_wheel_pos_};
+    js.position = {left_encoder_pos_, right_encoder_pos_};
     joint_pub_->publish(js);
 
     geometry_msgs::msg::TransformStamped t;
@@ -260,7 +290,6 @@ private:
     tf_broadcaster_->sendTransform(scan_tf);
   }
 
-  /// \brief Calculates relative marker positions and publishes seen ones as Yellow Markers.
   void publish_seen_markers(const rclcpp::Time & current_time)
   {
     const auto obs_x = get_parameter("obstacles.x").as_double_array();
@@ -280,16 +309,11 @@ private:
         m.id = static_cast<int>(i);
         m.type = visualization_msgs::msg::Marker::CYLINDER;
         m.action = visualization_msgs::msg::Marker::ADD;
-
         double th = current_pose_.rotation();
         m.pose.position.x = dx * std::cos(th) + dy * std::sin(th);
         m.pose.position.y = -dx * std::sin(th) + dy * std::cos(th);
         m.pose.position.z = 0.125;
-
-        m.scale.x = 2.0 * obs_r_;
-        m.scale.y = 2.0 * obs_r_;
-        m.scale.z = 0.25;
-
+        m.scale.x = 2.0 * obs_r_; m.scale.y = 2.0 * obs_r_; m.scale.z = 0.25;
         m.color.r = 1.0; m.color.g = 1.0; m.color.b = 0.0; m.color.a = 1.0;
         m.lifetime = rclcpp::Duration::from_seconds(0.1);
         seen_ma.markers.push_back(m);
@@ -298,7 +322,6 @@ private:
     seen_obs_pub_->publish(seen_ma);
   }
 
-  /// \brief Publishes a simulated laser scan centered on the robot.
   void publish_laser_scan(const rclcpp::Time & current_time)
   {
     sensor_msgs::msg::LaserScan scan;
@@ -311,7 +334,6 @@ private:
     scan.scan_time = dt_;
     scan.range_min = 0.12;
     scan.range_max = laser_max_range_;
-
     size_t num_readings = 360;
     scan.ranges.assign(num_readings, laser_max_range_ - 0.01);
     scan.intensities.assign(num_readings, 1.0);
@@ -332,9 +354,7 @@ private:
       m.pose.position.x = x.at(i);
       m.pose.position.y = y.at(i);
       m.pose.position.z = 0.125;
-      m.scale.x = 2.0 * r;
-      m.scale.y = 2.0 * r;
-      m.scale.z = 0.25;
+      m.scale.x = 2.0 * r; m.scale.y = 2.0 * r; m.scale.z = 0.25;
       m.color.r = 1.0; m.color.g = 0.0; m.color.b = 0.0; m.color.a = 1.0;
       ma.markers.push_back(m);
     }
@@ -345,37 +365,29 @@ private:
   {
     const auto x_len = get_parameter("arena_x_length").as_double();
     const auto y_len = get_parameter("arena_y_length").as_double();
-    const double thick = 0.01;
-    const double height = 0.25;
-
+    const double thick = 0.01; const double height = 0.25;
     visualization_msgs::msg::MarkerArray ma;
     for (int i = 0; i < 4; ++i) {
       visualization_msgs::msg::Marker m;
       m.header.frame_id = "nusim/world";
       m.header.stamp = get_clock()->now();
-      m.ns = "walls";
-      m.id = i;
+      m.ns = "walls"; m.id = i;
       m.type = visualization_msgs::msg::Marker::CUBE;
       if (i < 2) { 
         m.pose.position.x = (i == 0) ? x_len / 2.0 + thick / 2.0 : -x_len / 2.0 - thick / 2.0;
-        m.scale.x = thick;
-        m.scale.y = y_len + 2.0 * thick;
+        m.scale.x = thick; m.scale.y = y_len + 2.0 * thick;
       } else { 
         m.pose.position.y = (i == 2) ? y_len / 2.0 + thick / 2.0 : -y_len / 2.0 - thick / 2.0;
-        m.scale.x = x_len + 2.0 * thick;
-        m.scale.y = thick;
+        m.scale.x = x_len + 2.0 * thick; m.scale.y = thick;
       }
-      m.pose.position.z = height / 2.0;
-      m.scale.z = height;
+      m.pose.position.z = height / 2.0; m.scale.z = height;
       m.color.r = 1.0; m.color.a = 1.0;
       ma.markers.push_back(m);
     }
     wall_pub_->publish(ma);
   }
 
-  void reset_callback(
-    const std::shared_ptr<std_srvs::srv::Empty::Request>,
-    std::shared_ptr<std_srvs::srv::Empty::Response>)
+  void reset_callback(const std::shared_ptr<std_srvs::srv::Empty::Request>, std::shared_ptr<std_srvs::srv::Empty::Response>)
   {
     reset_to_initial_pose();
     publish_walls();
@@ -389,13 +401,18 @@ private:
   uint64_t timestep_;
   double dt_, obs_r_, laser_max_range_;
   double motor_scaling_, encoder_scaling_;
-  double left_wheel_pos_ = 0.0, right_wheel_pos_ = 0.0;
-  double left_wheel_vel_ = 0.0, right_wheel_vel_ = 0.0;
+  double left_wheel_pos_, right_wheel_pos_, left_encoder_pos_, right_encoder_pos_;
+  double u_l_cmd_, u_r_cmd_, v_l_physics_, v_r_physics_, v_l_sensor_, v_r_sensor_;
   bool draw_only_;
+  double input_noise_, slip_fraction_;
 
   turtlelib::Transform2D current_pose_;
   turtlelib::DiffDrive diff_robot_{0.0, 0.0};
   nav_msgs::msg::Path path_msg_;
+
+  std::default_random_engine rng_;
+  std::normal_distribution<double> gaussian_dist_;
+  std::uniform_real_distribution<double> slip_dist_;
 
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr timestep_pub_;
@@ -416,3 +433,4 @@ int main(int argc, char * argv[])
   rclcpp::shutdown();
   return 0;
 }
+

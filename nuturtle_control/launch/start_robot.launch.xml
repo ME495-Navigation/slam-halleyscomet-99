@@ -3,6 +3,9 @@
   <arg name="cmd_src" default="circle" description="circle, teleop, or none" />
   <arg name="robot" default="nusim" description="nusim, localhost, or none" />
   <arg name="use_rviz" default="true" description="true or false" />
+  
+  <arg name="input_noise" default="0.0" description="Variance of Gaussian noise on motor commands" />
+  <arg name="slip_fraction" default="0.0" description="Fraction of wheel slip (Uniform distribution)" />
 
   <group if="$(eval '\'$(var cmd_src)\' == \'circle\'')">
     <node pkg="nuturtle_control" exec="circle" name="circle">
@@ -57,6 +60,9 @@
     <node pkg="nusim" exec="nusimulator" name="nusimulator">
       <param from="$(find-pkg-share nusim)/config/basic_world.yaml" />
       <param name="draw_only" value="false" />
+      <param name="input_noise" value="$(var input_noise)" />
+      <param name="slip_fraction" value="$(var slip_fraction)" />
+      
       <remap from="wheel_cmd" to="red/wheel_cmd" />
       <remap from="sensor_data" to="red/sensor_data" />
     </node>
@@ -112,7 +118,6 @@
       <param name="odom_id" value="odom" />
       <param name="wheel_left" value="wheel_left_joint" />
       <param name="wheel_right" value="wheel_right_joint" />
-      
       <remap from="joint_states" to="blue/joint_states" />
       <remap from="odom" to="blue/odom" />
       <remap from="~/path" to="blue/path" />

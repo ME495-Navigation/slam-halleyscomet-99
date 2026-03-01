@@ -1,13 +1,12 @@
 /**:
   ros__parameters:
     rate: 100
-    x0: -0.6
-    y0: 0.3
-    theta0: 1.28
+    x0: 0.0
+    y0: 0.0
+    theta0: 0.0
     arena_x_length: 4.0
     arena_y_length: 4.0
     obstacles:
       x: [-0.4, 0.7, 0.5]
       y: [-0.7, -0.8, 0.8]
       r: 0.038
-    laser_max_range: 3.0
