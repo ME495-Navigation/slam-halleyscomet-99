@@ -96,6 +96,11 @@ public:
     declare_parameter("max_range", 3.0);
     declare_parameter("collision_radius", 0.0);
 
+    // Laser parameters
+    declare_parameter("laser.min_range", 0.12);
+    declare_parameter("laser.max_range", 3.5);
+    declare_parameter("laser.noise_stddev", 0.01);
+
     obs_r_ = get_parameter("obstacles.r").as_double();
     laser_max_range_ = get_parameter("laser_max_range").as_double();
     motor_scaling_ = get_parameter("motor_cmd_per_rad_sec").as_double();
@@ -447,21 +452,79 @@ private:
     seen_obs_pub_->publish(seen_ma);
   }
 
+  /// \brief Simulates Lidar data at 5Hz using ray casting against walls and obstacles.
+  /// \param current_time - The timestamp for the message header.
   void publish_laser_scan(const rclcpp::Time & current_time)
   {
+    // Only publish at 5Hz
+    if (timestep_ % 20 != 0) return; 
+
     sensor_msgs::msg::LaserScan scan;
     scan.header.stamp = current_time;
     scan.header.frame_id = "red/base_scan";
     scan.angle_min = 0.0;
     scan.angle_max = 2.0 * M_PI;
-    scan.angle_increment = M_PI / 180.0;
+    scan.angle_increment = (2.0 * M_PI) / 360.0;
     scan.time_increment = 0.0;
-    scan.scan_time = dt_;
+    scan.scan_time = 0.2; // 5Hz -> 0.2s period
     scan.range_min = 0.12;
-    scan.range_max = laser_max_range_;
-    size_t num_readings = 360;
-    scan.ranges.assign(num_readings, laser_max_range_ - 0.01);
-    scan.intensities.assign(num_readings, 1.0);
+    scan.range_max = 3.5; // Match TB3 spec
+
+    const auto ox = get_parameter("obstacles.x").as_double_array();
+    const auto oy = get_parameter("obstacles.y").as_double_array();
+    const auto x_len = get_parameter("arena_x_length").as_double();
+    const auto y_len = get_parameter("arena_y_length").as_double();
+
+    for (int i = 0; i < 360; ++i) {
+      double angle = scan.angle_min + i * scan.angle_increment;
+      // Ray direction in WORLD frame
+      double world_angle = current_pose_.rotation() + angle;
+      double rx = std::cos(world_angle);
+      double ry = std::sin(world_angle);
+      
+      double cur_x = current_pose_.translation().x;
+      double cur_y = current_pose_.translation().y;
+
+      double min_r = scan.range_max;
+
+      // --- 1. Intersection with Arena Walls ---
+      if (std::abs(rx) > 1e-6) {
+        double t1 = (x_len / 2.0 - cur_x) / rx;
+        double t2 = (-x_len / 2.0 - cur_x) / rx;
+        if (t1 > 0) min_r = std::min(min_r, t1);
+        if (t2 > 0) min_r = std::min(min_r, t2);
+      }
+      if (std::abs(ry) > 1e-6) {
+        double t1 = (y_len / 2.0 - cur_y) / ry;
+        double t2 = (-y_len / 2.0 - cur_y) / ry;
+        if (t1 > 0) min_r = std::min(min_r, t1);
+        if (t2 > 0) min_r = std::min(min_r, t2);
+      }
+
+      // --- 2. Intersection with Cylindrical Obstacles ---
+      for (size_t j = 0; j < ox.size(); ++j) {
+        double dx = ox[j] - cur_x;
+        double dy = oy[j] - cur_y;
+        double proj = dx * rx + dy * ry;
+        if (proj < 0) continue; 
+
+        double d2 = (dx * dx + dy * dy) - proj * proj;
+        if (d2 < obs_r_ * obs_r_) {
+          double dist_to_surface = proj - std::sqrt(obs_r_ * obs_r_ - d2);
+          if (dist_to_surface > 0) min_r = std::min(min_r, dist_to_surface);
+        }
+      }
+
+      // --- 3. Add Gaussian Noise and Range Check ---
+      double noise = std::normal_distribution<double>(0.0, 0.01)(rng_);
+      double final_range = min_r + noise;
+
+      if (final_range > scan.range_max || final_range < scan.range_min) {
+        scan.ranges.push_back(0.0); // Out of bounds
+      } else {
+        scan.ranges.push_back(final_range);
+      }
+    }
     scan_pub_->publish(scan);
   }
 
@@ -533,9 +596,6 @@ private:
   /// \brief Radius of cylindrical obstacles [m]
   double obs_r_;
 
-  /// \brief Maximum range of the robot's laser scanner [m]
-  double laser_max_range_;
-
   /// \brief Scaling factor for motor commands (cmd to rad/sec)
   double motor_scaling_;
 
@@ -575,6 +635,32 @@ private:
   /// \brief Radius used for robot-obstacle collision detection [m]
   double collision_radius_;
 
+  // --- Lidar Simulation ---
+
+  /// \brief Minimum detection range of the lidar [m]
+  double laser_min_range_;
+
+  /// \brief Maximum detection range of the lidar [m]
+  double laser_max_range_;
+
+  /// \brief Angle increment between lidar samples [rad]
+  double laser_angle_increment_;
+
+  /// \brief Number of samples per lidar scan
+  int laser_samples_;
+
+  /// \brief Resolution or step size of the lidar [m]
+  double laser_resolution_;
+
+  /// \brief Standard deviation of the Gaussian noise added to lidar distance measurements [m]
+  double laser_noise_stddev_;
+
+  /// \brief Minimum angle of the lidar scan [rad]
+  double laser_angle_min_;
+
+  /// \brief Maximum angle of the lidar scan [rad]
+  double laser_angle_max_;
+
   // --- Randomness and Noise Distributions ---
 
   /// \brief Normal distribution for basic sensor noise
@@ -583,8 +669,12 @@ private:
   /// \brief Timer for the 5Hz fake sensor publishing
   rclcpp::TimerBase::SharedPtr sensor_timer_;
 
-  /// \brief Publisher for fake relative sensor markers (Task C.10)
+  /// \brief Publisher for fake relative sensor markers
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr fake_sensor_pub_;
+
+
+  /// \brief Normal distribution for lidar distance noise
+  std::normal_distribution<double> laser_noise_dist_;
 
   // --- Kinematics and State ---
 
@@ -623,7 +713,7 @@ private:
   /// \brief Publisher for simulated laser scan data
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
 
-  /// \brief Publisher for simulated encoder data (Task C.9)
+  /// \brief Publisher for simulated encoder data
   rclcpp::Publisher<nuturtlebot_msgs::msg::SensorData>::SharedPtr sensor_pub_;
 
   /// \brief Publisher for joint states used in visualization

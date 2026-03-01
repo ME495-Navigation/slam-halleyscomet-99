@@ -8,6 +8,7 @@ Panels:
         - /Status1
         - /MarkerArray1/Topic1
         - /MarkerArray2/Topic1
+        - /LaserScan1
       Splitter Ratio: 0.5
     Tree Height: 377
   - Class: rviz_common/Selection
@@ -280,8 +281,8 @@ Visualization Manager:
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/LaserScan
-      Color: 255; 255; 255
-      Color Transformer: Intensity
+      Color: 0; 255; 0
+      Color Transformer: FlatColor
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
@@ -294,7 +295,7 @@ Visualization Manager:
       Selectable: true
       Size (Pixels): 3
       Size (m): 0.009999999776482582
-      Style: Flat Squares
+      Style: Points
       Topic:
         Depth: 5
         Durability Policy: Volatile
