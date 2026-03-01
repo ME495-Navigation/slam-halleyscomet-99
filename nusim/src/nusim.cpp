@@ -79,7 +79,7 @@ public:
     declare_parameter("laser_max_range", 3.0);
     declare_parameter("draw_only", false);
 
-    // C.9 Noise Parameters
+    // Noise Parameters
     declare_parameter("input_noise", 0.0);
     declare_parameter("slip_fraction", 0.0);
 
@@ -88,6 +88,8 @@ public:
     declare_parameter("encoder_ticks_per_rad", 651.47);
     declare_parameter("wheel_radius", 0.033);
     declare_parameter("track_width", 0.16);
+    declare_parameter("basic_sensor_variance", 0.0);
+    declare_parameter("max_range", 3.0);
 
     obs_r_ = get_parameter("obstacles.r").as_double();
     laser_max_range_ = get_parameter("laser_max_range").as_double();
@@ -98,6 +100,11 @@ public:
     draw_only_ = get_parameter("draw_only").as_bool();
     input_noise_ = get_parameter("input_noise").as_double();
     slip_fraction_ = get_parameter("slip_fraction").as_double();
+    basic_sensor_variance_ = get_parameter("basic_sensor_variance").as_double();
+    max_range_ = get_parameter("max_range").as_double();
+
+    // Initialize sensor noise distribution
+    sensor_dist_ = std::normal_distribution<double>(0.0, std::sqrt(basic_sensor_variance_));
 
     // Initialize Random Engine and Distributions
     rng_.seed(std::random_device{}());
@@ -122,6 +129,11 @@ public:
       scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>("~/laser_scan", 10);
       sensor_pub_ = create_publisher<nuturtlebot_msgs::msg::SensorData>("sensor_data", 10);
       joint_pub_ = create_publisher<sensor_msgs::msg::JointState>("red/joint_states", 10);
+
+      fake_sensor_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/fake_sensor", 10);
+
+      // 5 Hz timer for the fake sensor (200ms period)
+      sensor_timer_ = create_wall_timer(200ms, std::bind(&Nusimulator::sensor_timer_callback, this));
 
       wheel_sub_ = create_subscription<nuturtlebot_msgs::msg::WheelCommands>(
         "wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
@@ -152,6 +164,55 @@ private:
     publish_obstacles(ox, oy, obs_r_);
   }
 
+  /// \brief Callback for the 5Hz sensor timer. Calculates relative obstacle positions with noise.
+  void sensor_timer_callback()
+  {
+    const auto ox = get_parameter("obstacles.x").as_double_array();
+    const auto oy = get_parameter("obstacles.y").as_double_array();
+    const auto current_time = get_clock()->now();
+    
+    visualization_msgs::msg::MarkerArray ma;
+
+    for (size_t i = 0; i < ox.size(); ++i) {
+      // 1. Calculate relative position in world coordinates
+      double dx = ox[i] - current_pose_.translation().x;
+      double dy = oy[i] - current_pose_.translation().y;
+
+      // 2. Transform to robot's local frame
+      double th = current_pose_.rotation();
+      double local_x = dx * std::cos(th) + dy * std::sin(th);
+      double local_y = -dx * std::sin(th) + dy * std::cos(th);
+      double dist = std::sqrt(local_x * local_x + local_y * local_y);
+
+      visualization_msgs::msg::Marker m;
+      m.header.frame_id = "red/base_footprint"; // Relative to robot
+      m.header.stamp = current_time;
+      m.ns = "fake_sensor";
+      m.id = static_cast<int>(i);
+      m.type = visualization_msgs::msg::Marker::CYLINDER;
+
+      // 3. Range check
+      if (dist <= max_range_) {
+        m.action = visualization_msgs::msg::Marker::ADD;
+        // Add zero-mean Gaussian noise to the measured coordinates
+        m.pose.position.x = local_x + sensor_dist_(rng_);
+        m.pose.position.y = local_y + sensor_dist_(rng_);
+        m.pose.position.z = 0.125;
+        
+        m.scale.x = 2.0 * obs_r_;
+        m.scale.y = 2.0 * obs_r_;
+        m.scale.z = 0.25;
+        // Marker color (different from real obstacles to distinguish)
+        m.color.r = 0.5; m.color.g = 0.0; m.color.b = 0.5; m.color.a = 1.0; 
+      } else {
+        // Set action to DELETE if out of range
+        m.action = visualization_msgs::msg::Marker::DELETE;
+      }
+      ma.markers.push_back(m);
+    }
+    fake_sensor_pub_->publish(ma);
+  }
+
   /// \brief Callback for wheel commands: Stores raw commands for the main loop.
   void wheel_cmd_callback(const nuturtlebot_msgs::msg::WheelCommands::SharedPtr msg)
   {
@@ -163,8 +224,6 @@ private:
   void timer_callback()
   {
     const auto current_time = get_clock()->now();
-
-    // --- Task C.9 Logic: Apply Noise and Slip EVERY FRAME ---
     
     // Step 2 & 3: Compute v_i = u_i + w_i (Gaussian noise per frame)
     auto get_v_sensor = [&](double u) {
@@ -178,8 +237,6 @@ private:
     // Step 4: Compute physical velocity with slip (Uniform slip per frame)
     v_l_physics_ = v_l_sensor_ * (1.0 + slip_dist_(rng_));
     v_r_physics_ = v_r_sensor_ * (1.0 + slip_dist_(rng_));
-
-    // --- End Task C.9 Logic ---
 
     // 1. Update Physics Layer (Ground Truth - With Slip)
     left_wheel_pos_ += v_l_physics_ * dt_;
@@ -405,6 +462,12 @@ private:
   double u_l_cmd_, u_r_cmd_, v_l_physics_, v_r_physics_, v_l_sensor_, v_r_sensor_;
   bool draw_only_;
   double input_noise_, slip_fraction_;
+  double basic_sensor_variance_;
+  double max_range_;
+
+  std::normal_distribution<double> sensor_dist_;
+  rclcpp::TimerBase::SharedPtr sensor_timer_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr fake_sensor_pub_;
 
   turtlelib::Transform2D current_pose_;
   turtlelib::DiffDrive diff_robot_{0.0, 0.0};
