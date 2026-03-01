@@ -1,4 +1,4 @@
-nusimulator:
+/**:
   ros__parameters:
     rate: 100
     x0: -0.6
@@ -10,3 +10,4 @@ nusimulator:
       x: [-0.4, 0.7, 0.5]
       y: [-0.7, -0.8, 0.8]
       r: 0.038
+    laser_max_range: 3.0

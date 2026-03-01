@@ -15,7 +15,8 @@
 ///     encoder_ticks_per_rad (double): Ticks per radian for the encoders.
 ///     wheel_radius (double): Radius of the robot wheels [m].
 ///     track_width (double): Distance between wheels [m].
-///     laser_max_range (double): Max range of simulated laser (V.1).
+///     laser_max_range (double): Max range of simulated laser.
+///     draw_only (bool): If true, only draw landmarks and walls, no simulation.
 /// PUBLISHES:
 ///     ~/timestep (std_msgs::msg::UInt64): Current simulation timestep count.
 ///     ~/real_walls (visualization_msgs::msg::MarkerArray): Markers representing the arena walls.
@@ -73,6 +74,7 @@ public:
     declare_parameter("obstacles.y", std::vector<double>{});
     declare_parameter("obstacles.r", 0.1);
     declare_parameter("laser_max_range", 3.0);
+    declare_parameter("draw_only", false);
 
     // Kinematics/Physics Parameters
     declare_parameter("motor_cmd_per_rad_sec", 0.024);
@@ -80,66 +82,66 @@ public:
     declare_parameter("wheel_radius", 0.033);
     declare_parameter("track_width", 0.16);
 
-    const auto obs_x = get_parameter("obstacles.x").as_double_array();
-    const auto obs_y = get_parameter("obstacles.y").as_double_array();
     obs_r_ = get_parameter("obstacles.r").as_double();
     laser_max_range_ = get_parameter("laser_max_range").as_double();
     motor_scaling_ = get_parameter("motor_cmd_per_rad_sec").as_double();
     encoder_scaling_ = get_parameter("encoder_ticks_per_rad").as_double();
     const auto radius = get_parameter("wheel_radius").as_double();
     const auto track = get_parameter("track_width").as_double();
+    draw_only_ = get_parameter("draw_only").as_bool();
 
-    if (obs_x.size() != obs_y.size()) {
-      RCLCPP_FATAL(get_logger(), "obstacles.x and obstacles.y must have the same length!");
-      throw std::runtime_error("Parameter size mismatch");
-    }
-
-    // 2. Setup Publishers/Subscribers
+    // 2. Setup Publishers (Landmarks are always needed)
     auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local();
-    timestep_pub_ = create_publisher<std_msgs::msg::UInt64>("~/timestep", 10);
     wall_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/real_walls", latched_qos);
     obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
       "~/real_obstacles", latched_qos);
 
-    seen_obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      "~/seen_obstacles", 10);
-    path_pub_ = create_publisher<nav_msgs::msg::Path>("~/path", 10);
-    
-    // Default QoS (Reliable) to fix the "Incompatible QoS" warning with default RViz settings
-    scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>("~/laser_scan", 10);
+    // 3. Conditional Setup based on Mode
+    if (draw_only_) {
+      // In draw_only mode (nuwalls), we only need a slow timer for landmarks
+      timer_ = create_wall_timer(500ms, std::bind(&Nusimulator::draw_only_timer_callback, this));
+      RCLCPP_INFO(get_logger(), "Nusimulator started in DRAW_ONLY mode (nuwalls).");
+    } else {
+      // Normal Simulation Setup
+      timestep_pub_ = create_publisher<std_msgs::msg::UInt64>("~/timestep", 10);
+      seen_obs_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+        "~/seen_obstacles", 10);
+      path_pub_ = create_publisher<nav_msgs::msg::Path>("~/path", 10);
+      scan_pub_ = create_publisher<sensor_msgs::msg::LaserScan>("~/laser_scan", 10);
+      sensor_pub_ = create_publisher<nuturtlebot_msgs::msg::SensorData>("sensor_data", 10);
+      joint_pub_ = create_publisher<sensor_msgs::msg::JointState>("red/joint_states", 10);
 
-    sensor_pub_ = create_publisher<nuturtlebot_msgs::msg::SensorData>("sensor_data", 10);
-    joint_pub_ = create_publisher<sensor_msgs::msg::JointState>("red/joint_states", 10);
+      wheel_sub_ = create_subscription<nuturtlebot_msgs::msg::WheelCommands>(
+        "wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
 
-    wheel_sub_ = create_subscription<nuturtlebot_msgs::msg::WheelCommands>(
-      "wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
+      tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+      reset_srv_ = create_service<std_srvs::srv::Empty>(
+        "~/reset",
+        std::bind(&Nusimulator::reset_callback, this, std::placeholders::_1, std::placeholders::_2));
 
-    // 3. Setup Broadcaster and Services
-    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
-    reset_srv_ = create_service<std_srvs::srv::Empty>(
-      "~/reset",
-      std::bind(&Nusimulator::reset_callback, this, std::placeholders::_1, std::placeholders::_2));
+      diff_robot_ = turtlelib::DiffDrive(track, radius);
+      path_msg_.header.frame_id = "nusim/world";
+      reset_to_initial_pose();
 
-    // 4. Initialize Simulation State
-    diff_robot_ = turtlelib::DiffDrive(track, radius);
-    path_msg_.header.frame_id = "nusim/world";
-
-    reset_to_initial_pose();
-
-    // 5. Timer Setup
-    const auto rate_val = get_parameter("rate").as_int();
-    dt_ = 1.0 / static_cast<double>(rate_val);
-    const auto period = std::chrono::milliseconds(static_cast<int>(1000.0 * dt_));
-    timer_ = create_wall_timer(period, std::bind(&Nusimulator::timer_callback, this));
-
-    // 6. Initial Visualization
-    publish_walls();
-    publish_obstacles(obs_x, obs_y, obs_r_);
-
-    RCLCPP_INFO(get_logger(), "Nusimulator initialized with V.1 Visualization features.");
+      const auto rate_val = get_parameter("rate").as_int();
+      dt_ = 1.0 / static_cast<double>(rate_val);
+      const auto period = std::chrono::milliseconds(static_cast<int>(1000.0 * dt_));
+      timer_ = create_wall_timer(period, std::bind(&Nusimulator::timer_callback, this));
+      
+      RCLCPP_INFO(get_logger(), "Nusimulator started in SIMULATION mode (nusim).");
+    }
   }
 
 private:
+  /// \brief Timer callback for draw_only mode.
+  void draw_only_timer_callback()
+  {
+    publish_walls();
+    const auto ox = get_parameter("obstacles.x").as_double_array();
+    const auto oy = get_parameter("obstacles.y").as_double_array();
+    publish_obstacles(ox, oy, obs_r_);
+  }
+
   /// \brief Callback for incoming wheel velocity commands.
   void wheel_cmd_callback(const nuturtlebot_msgs::msg::WheelCommands::SharedPtr msg)
   {
@@ -177,10 +179,31 @@ private:
     diff_robot_.forward_kinematics({left_wheel_pos_, right_wheel_pos_});
     current_pose_ = diff_robot_.configuration();
 
-    // 2. Publish TF (MUST be before Scan/Path/Markers to prevent RViz dropping messages)
+    // 2. Publish Robot State and TF
     publish_robot_state(current_time);
 
-    // 3. Publish Path (Red)
+    // 3. Publish Visualization
+    publish_path(current_time);
+    publish_seen_markers(current_time);
+    publish_laser_scan(current_time);
+    
+    // Publish Landmarks occasionally even in sim
+    if (timestep_ % 50 == 0) {
+      publish_walls();
+      const auto ox = get_parameter("obstacles.x").as_double_array();
+      const auto oy = get_parameter("obstacles.y").as_double_array();
+      publish_obstacles(ox, oy, obs_r_);
+    }
+
+    // 4. Timestep
+    std_msgs::msg::UInt64 ts_msg;
+    ts_msg.data = timestep_;
+    timestep_pub_->publish(ts_msg);
+    timestep_++;
+  }
+
+  void publish_path(const rclcpp::Time & current_time)
+  {
     geometry_msgs::msg::PoseStamped ps;
     ps.header.stamp = current_time;
     ps.header.frame_id = "nusim/world";
@@ -195,16 +218,6 @@ private:
     path_msg_.poses.push_back(ps);
     path_msg_.header.stamp = current_time;
     path_pub_->publish(path_msg_);
-
-    // 4. Publish Markers and Laser
-    publish_seen_markers(current_time);
-    publish_laser_scan(current_time);
-
-    // 5. Timestep
-    std_msgs::msg::UInt64 ts_msg;
-    ts_msg.data = timestep_;
-    timestep_pub_->publish(ts_msg);
-    timestep_++;
   }
 
   /// \brief Broadcasts Ground Truth TF and publishes sensor data.
@@ -305,7 +318,6 @@ private:
     scan_pub_->publish(scan);
   }
 
-  /// \brief Create and publish ground truth red markers for obstacles.
   void publish_obstacles(const std::vector<double> & x, const std::vector<double> & y, double r)
   {
     visualization_msgs::msg::MarkerArray ma;
@@ -329,7 +341,6 @@ private:
     obs_pub_->publish(ma);
   }
 
-  /// \brief Publishes arena boundaries as red walls.
   void publish_walls()
   {
     const auto x_len = get_parameter("arena_x_length").as_double();
@@ -362,7 +373,6 @@ private:
     wall_pub_->publish(ma);
   }
 
-  /// \brief Resets simulation state to initial configuration.
   void reset_callback(
     const std::shared_ptr<std_srvs::srv::Empty::Request>,
     std::shared_ptr<std_srvs::srv::Empty::Response>)
@@ -372,13 +382,6 @@ private:
     const auto ox = get_parameter("obstacles.x").as_double_array();
     const auto oy = get_parameter("obstacles.y").as_double_array();
     publish_obstacles(ox, oy, obs_r_);
-
-    visualization_msgs::msg::MarkerArray delete_ma;
-    visualization_msgs::msg::Marker delete_marker;
-    delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
-    delete_ma.markers.push_back(delete_marker);
-    seen_obs_pub_->publish(delete_ma);
-    
     RCLCPP_INFO(get_logger(), "Simulation Reset.");
   }
 
@@ -388,6 +391,7 @@ private:
   double motor_scaling_, encoder_scaling_;
   double left_wheel_pos_ = 0.0, right_wheel_pos_ = 0.0;
   double left_wheel_vel_ = 0.0, right_wheel_vel_ = 0.0;
+  bool draw_only_;
 
   turtlelib::Transform2D current_pose_;
   turtlelib::DiffDrive diff_robot_{0.0, 0.0};

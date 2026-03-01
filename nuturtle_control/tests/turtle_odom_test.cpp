@@ -71,7 +71,7 @@ TEST_CASE("odometry ROS API", "[odometry]") {
     }
 
     // Prepare a mock joint state message
-    // Note: Joint states are kept at 0.0 to verify identity transform as requested
+    // Joint states are kept at 0.0 to verify identity transform as requested
     sensor_msgs::msg::JointState js;
     js.name = {"wheel_left_joint", "wheel_right_joint"};
     js.position = {0.0, 0.0};

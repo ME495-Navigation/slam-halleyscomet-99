@@ -14,6 +14,26 @@
     <node pkg="teleop_twist_keyboard" exec="teleop_twist_keyboard" launch-prefix="xterm -e" />
   </group>
 
+  <group if="$(eval '\'$(var robot)\' != \'nusim\'')">
+    <node pkg="nusim" exec="nusimulator" name="nuwalls">
+      <param from="$(find-pkg-share nusim)/config/basic_world.yaml" />
+      <param name="draw_only" value="true" />
+    </node>
+
+    <node pkg="tf2_ros" exec="static_transform_publisher" name="world_to_odom"
+          args="--frame-id nusim/world --child-frame-id odom" />
+
+    <node pkg="rviz2" exec="rviz2" name="rviz2" 
+          args="-d $(find-pkg-share nuturtle_control)/config/start_robot.rviz"
+          if="$(var use_rviz)" />
+
+    <include file="$(find-pkg-share nuturtle_description)/launch/load_one.launch.xml">
+      <arg name="color" value="blue" />
+      <arg name="use_rviz" value="false" />
+      <arg name="use_jsp" value="false" /> 
+    </include>
+  </group>
+
   <group if="$(eval '\'$(var robot)\' == \'nusim\'')">
     <node pkg="tf2_ros" exec="static_transform_publisher" name="world_to_odom"
           args="--frame-id nusim/world --child-frame-id odom" />
@@ -28,16 +48,15 @@
       <arg name="use_jsp" value="false" />
     </include>
     
-    <group>
-      <node pkg="robot_state_publisher" exec="robot_state_publisher" name="blue_rsp">
-        <param name="robot_description" value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=blue')" />
-        <param name="frame_prefix" value="blue/" />
-        <remap from="joint_states" to="/red/joint_states" />
-      </node>
-    </group>
+    <node pkg="robot_state_publisher" exec="robot_state_publisher" name="blue_rsp">
+      <param name="robot_description" value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=blue')" />
+      <param name="frame_prefix" value="blue/" />
+      <remap from="joint_states" to="/red/joint_states" />
+    </node>
 
     <node pkg="nusim" exec="nusimulator" name="nusimulator">
       <param from="$(find-pkg-share nusim)/config/basic_world.yaml" />
+      <param name="draw_only" value="false" />
       <remap from="wheel_cmd" to="red/wheel_cmd" />
       <remap from="sensor_data" to="red/sensor_data" />
     </node>
@@ -62,15 +81,10 @@
   </group>
 
   <group if="$(eval '\'$(var robot)\' == \'localhost\'')">
-    <include file="$(find-pkg-share nuturtle_description)/launch/load_one.launch.xml">
-      <arg name="color" value="blue" />
-      <arg name="use_rviz" value="false" />
-      <arg name="use_jsp" value="false" /> 
-    </include>
-
     <include file="$(find-pkg-share hls_lfcd_lds_driver)/launch/hlds_laser.launch.py">
       <arg name="port" value="/dev/ttyUSB0" />
-      <arg name="frame_id" value="blue/base_scan" /> </include>
+      <arg name="frame_id" value="blue/base_scan" /> 
+    </include>
 
     <node pkg="nuturtle_control" exec="turtle_control" name="turtle_control">
       <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml" />
@@ -84,15 +98,30 @@
       <param name="wheel_left" value="wheel_left_joint" />
       <param name="wheel_right" value="wheel_right_joint" />
       <remap from="joint_states" to="blue/joint_states" />
+      <remap from="odom" to="blue/odom" />
+      <remap from="~/path" to="blue/path" />
     </node>
 
     <node pkg="numsr_turtlebot" exec="numsr_turtlebot" name="numsr_turtlebot" />
-
-    <node pkg="tf2_ros" exec="static_transform_publisher" name="world_to_odom"
-          args="--frame-id nusim/world --child-frame-id odom" />
-
-    <node pkg="rviz2" exec="rviz2" name="rviz2" 
-          args="-d $(find-pkg-share nuturtle_control)/config/start_robot.rviz"
-          if="$(var use_rviz)" />
   </group>
+
+  <group if="$(eval '\'$(var robot)\' == \'none\'')">
+    <node pkg="nuturtle_control" exec="odometry" name="odometry">
+      <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml" />
+      <param name="body_id" value="blue/base_footprint" />
+      <param name="odom_id" value="odom" />
+      <param name="wheel_left" value="wheel_left_joint" />
+      <param name="wheel_right" value="wheel_right_joint" />
+      
+      <remap from="joint_states" to="blue/joint_states" />
+      <remap from="odom" to="blue/odom" />
+      <remap from="~/path" to="blue/path" />
+    </node>
+    <node pkg="robot_state_publisher" exec="robot_state_publisher" name="blue_rsp">
+      <param name="robot_description" value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=blue')" />
+      <param name="frame_prefix" value="blue/" />
+      <remap from="joint_states" to="blue/joint_states" />
+    </node>
+  </group>
+
 </launch>
