@@ -11,6 +11,7 @@ DiffDrive::DiffDrive() {}
 DiffDrive::DiffDrive(double track, double radius)
 : track_width_(track), wheel_radius_(radius) {}
 
+    // can delegate these constructors (one diff drive constructor can call another to avoid reduendancy)
 DiffDrive::DiffDrive(double track, double radius, Transform2D q)
 : track_width_(track), wheel_radius_(radius), q_(q) {}
 
