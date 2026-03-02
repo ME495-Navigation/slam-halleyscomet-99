@@ -7,6 +7,7 @@ A standalone C++ library for 2D rigid body transformations, geometric primitives
 * **se2d.hpp**: Implements $SE(2)$ rigid body transformations (`Transform2D`) and twists (`Twist2D`), supporting composition, inversion, adjoint transformations, and twist integration.
 * **diff_drive.hpp**: Models the kinematics of a differential drive robot. It tracks wheel positions and robot configuration while providing Forward and Inverse Kinematics functionality.
 * **svg.hpp**: A utility for exporting 2D geometric objects (Points, Vectors, and Coordinate Frames) into SVG (Scalable Vector Graphics) files for visualization.
+* **ekf.hpp**: Implements a Feature-based **Extended Kalman Filter (EKF) SLAM** algorithm. It manages the joint state vector (robot pose and landmark positions) and covariance matrix, providing prediction and correction steps using a Cartesian measurement model.
 
 ## Kinematics Documentation
 Detailed mathematical derivations for the differential drive kinematics, including the formulas for wheel velocities (Inverse Kinematics) and pose updates (Forward Kinematics), are recorded in:

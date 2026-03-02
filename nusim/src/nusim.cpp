@@ -144,15 +144,18 @@ public:
       fake_sensor_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("/fake_sensor", 10);
 
       // 5 Hz timer for the fake sensor (200ms period)
-      sensor_timer_ = create_wall_timer(200ms, std::bind(&Nusimulator::sensor_timer_callback, this));
+      sensor_timer_ = create_wall_timer(200ms,
+        std::bind(&Nusimulator::sensor_timer_callback, this));
 
       wheel_sub_ = create_subscription<nuturtlebot_msgs::msg::WheelCommands>(
-        "red/wheel_cmd", 10, std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
+        "red/wheel_cmd", 10,
+        std::bind(&Nusimulator::wheel_cmd_callback, this, std::placeholders::_1));
 
       tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
       reset_srv_ = create_service<std_srvs::srv::Empty>(
         "~/reset",
-        std::bind(&Nusimulator::reset_callback, this, std::placeholders::_1, std::placeholders::_2));
+        std::bind(&Nusimulator::reset_callback, this, std::placeholders::_1,
+        std::placeholders::_2));
 
       diff_robot_ = turtlelib::DiffDrive(track, radius);
       path_msg_.header.frame_id = "nusim/world";
@@ -181,7 +184,7 @@ private:
     const auto ox = get_parameter("obstacles.x").as_double_array();
     const auto oy = get_parameter("obstacles.y").as_double_array();
     const auto current_time = get_clock()->now();
-    
+
     visualization_msgs::msg::MarkerArray ma;
 
     for (size_t i = 0; i < ox.size(); ++i) {
@@ -209,12 +212,12 @@ private:
         m.pose.position.x = local_x + sensor_dist_(rng_);
         m.pose.position.y = local_y + sensor_dist_(rng_);
         m.pose.position.z = 0.125;
-        
+
         m.scale.x = 2.0 * obs_r_;
         m.scale.y = 2.0 * obs_r_;
         m.scale.z = 0.25;
         // Marker color (different from real obstacles to distinguish)
-        m.color.r = 0.5; m.color.g = 0.0; m.color.b = 0.5; m.color.a = 1.0; 
+        m.color.r = 0.5; m.color.g = 0.0; m.color.b = 0.5; m.color.a = 1.0;
       } else {
         // Set action to DELETE if out of range
         m.action = visualization_msgs::msg::Marker::DELETE;
@@ -238,9 +241,9 @@ private:
 
     // --- 1. Compute frame-specific noise and physical velocities ---
     auto get_v_sensor = [&](double u) {
-      if (std::abs(u) < 1e-6) return 0.0;
-      return u + gaussian_dist_(rng_);
-    };
+        if (std::abs(u) < 1e-6) {return 0.0;}
+        return u + gaussian_dist_(rng_);
+      };
 
     v_l_sensor_ = get_v_sensor(u_l_cmd_);
     v_r_sensor_ = get_v_sensor(u_r_cmd_);
@@ -251,7 +254,7 @@ private:
     // Use cumulative wheel positions to drive the FK.
     left_wheel_pos_ += v_l_physics_ * dt_;
     right_wheel_pos_ += v_r_physics_ * dt_;
-    
+
     // Perform Forward Kinematics using the cumulative positions
     diff_robot_.forward_kinematics({left_wheel_pos_, right_wheel_pos_});
     current_pose_ = diff_robot_.configuration();
@@ -275,17 +278,17 @@ private:
 
         // Force current_pose_ to the boundary for TF publishing
         current_pose_ = turtlelib::Transform2D({fixed_x, fixed_y}, current_pose_.rotation());
-        
+
         diff_robot_ = turtlelib::DiffDrive(
-            diff_robot_.track_width(), 
-            diff_robot_.wheel_radius(), 
+            diff_robot_.track_width(),
+            diff_robot_.wheel_radius(),
             current_pose_);
-            
+
         // Reset physics tracking variables to 0 because the new diff_robot_ starts at 0
         left_wheel_pos_ = 0.0;
         right_wheel_pos_ = 0.0;
 
-        break; 
+        break;
       }
     }
 
@@ -303,20 +306,20 @@ private:
     bool wall_hit = false;
 
     // Check and correct for wall collisions, pushing the robot back to the boundary if it exceeds limits
-    if (p.x > x_max) { p.x = x_max; wall_hit = true; }
-    if (p.x < x_min) { p.x = x_min; wall_hit = true; }
-    if (p.y > y_max) { p.y = y_max; wall_hit = true; }
-    if (p.y < y_min) { p.y = y_min; wall_hit = true; }
+    if (p.x > x_max) {p.x = x_max; wall_hit = true;}
+    if (p.x < x_min) {p.x = x_min; wall_hit = true;}
+    if (p.y > y_max) {p.y = y_max; wall_hit = true;}
+    if (p.y < y_min) {p.y = y_min; wall_hit = true;}
 
     if (wall_hit) {
       // Update current_pose_ to the corrected position while keeping the same orientation
       current_pose_ = turtlelib::Transform2D({p.x, p.y}, current_pose_.rotation());
-      
+
       diff_robot_ = turtlelib::DiffDrive(
-          diff_robot_.track_width(), 
-          diff_robot_.wheel_radius(), 
+          diff_robot_.track_width(),
+          diff_robot_.wheel_radius(),
           current_pose_);
-          
+
       left_wheel_pos_ = 0.0;
       right_wheel_pos_ = 0.0;
     }
@@ -331,7 +334,7 @@ private:
     publish_path(current_time);
     publish_seen_markers(current_time);
     publish_laser_scan(current_time);
-    
+
     if (timestep_ % 50 == 0) {
       publish_walls();
       publish_obstacles(ox, oy, obs_r_);
@@ -409,15 +412,15 @@ private:
     t.transform.rotation.w = q.w();
     tf_broadcaster_->sendTransform(t);
 
-    geometry_msgs::msg::TransformStamped scan_tf;
-    scan_tf.header.stamp = current_time;
-    scan_tf.header.frame_id = "red/base_footprint";
-    scan_tf.child_frame_id = "red/base_scan";
-    scan_tf.transform.translation.x = 0.0;
-    scan_tf.transform.translation.y = 0.0;
-    scan_tf.transform.translation.z = 0.0;
-    scan_tf.transform.rotation.w = 1.0;
-    tf_broadcaster_->sendTransform(scan_tf);
+    // geometry_msgs::msg::TransformStamped scan_tf;
+    // scan_tf.header.stamp = current_time;
+    // scan_tf.header.frame_id = "red/base_footprint";
+    // scan_tf.child_frame_id = "red/base_scan";
+    // scan_tf.transform.translation.x = 0.0;
+    // scan_tf.transform.translation.y = 0.0;
+    // scan_tf.transform.translation.z = 0.0;
+    // scan_tf.transform.rotation.w = 1.0;
+    // tf_broadcaster_->sendTransform(scan_tf);
   }
 
   void publish_seen_markers(const rclcpp::Time & current_time)
@@ -429,7 +432,7 @@ private:
     for (size_t i = 0; i < obs_x.size(); ++i) {
       double dx = obs_x[i] - current_pose_.translation().x;
       double dy = obs_y[i] - current_pose_.translation().y;
-      double dist = std::sqrt(dx*dx + dy*dy);
+      double dist = std::sqrt(dx * dx + dy * dy);
 
       if (dist <= laser_max_range_) {
         visualization_msgs::msg::Marker m;
@@ -447,7 +450,7 @@ private:
         m.color.r = 1.0; m.color.g = 1.0; m.color.b = 0.0; m.color.a = 1.0;
         m.lifetime = rclcpp::Duration::from_seconds(0.1);
         seen_ma.markers.push_back(m);
-      } 
+      }
     }
     seen_obs_pub_->publish(seen_ma);
   }
@@ -457,7 +460,7 @@ private:
   void publish_laser_scan(const rclcpp::Time & current_time)
   {
     // Only publish at 5Hz
-    if (timestep_ % 20 != 0) return; 
+    if (timestep_ % 20 != 0) {return;}
 
     sensor_msgs::msg::LaserScan scan;
     scan.header.stamp = current_time;
@@ -481,7 +484,7 @@ private:
       double world_angle = current_pose_.rotation() + angle;
       double rx = std::cos(world_angle);
       double ry = std::sin(world_angle);
-      
+
       double cur_x = current_pose_.translation().x;
       double cur_y = current_pose_.translation().y;
 
@@ -491,14 +494,14 @@ private:
       if (std::abs(rx) > 1e-6) {
         double t1 = (x_len / 2.0 - cur_x) / rx;
         double t2 = (-x_len / 2.0 - cur_x) / rx;
-        if (t1 > 0) min_r = std::min(min_r, t1);
-        if (t2 > 0) min_r = std::min(min_r, t2);
+        if (t1 > 0) {min_r = std::min(min_r, t1);}
+        if (t2 > 0) {min_r = std::min(min_r, t2);}
       }
       if (std::abs(ry) > 1e-6) {
         double t1 = (y_len / 2.0 - cur_y) / ry;
         double t2 = (-y_len / 2.0 - cur_y) / ry;
-        if (t1 > 0) min_r = std::min(min_r, t1);
-        if (t2 > 0) min_r = std::min(min_r, t2);
+        if (t1 > 0) {min_r = std::min(min_r, t1);}
+        if (t2 > 0) {min_r = std::min(min_r, t2);}
       }
 
       // --- 2. Intersection with Cylindrical Obstacles ---
@@ -506,12 +509,12 @@ private:
         double dx = ox[j] - cur_x;
         double dy = oy[j] - cur_y;
         double proj = dx * rx + dy * ry;
-        if (proj < 0) continue; 
+        if (proj < 0) {continue;}
 
         double d2 = (dx * dx + dy * dy) - proj * proj;
         if (d2 < obs_r_ * obs_r_) {
           double dist_to_surface = proj - std::sqrt(obs_r_ * obs_r_ - d2);
-          if (dist_to_surface > 0) min_r = std::min(min_r, dist_to_surface);
+          if (dist_to_surface > 0) {min_r = std::min(min_r, dist_to_surface);}
         }
       }
 
@@ -561,10 +564,10 @@ private:
       m.header.stamp = get_clock()->now();
       m.ns = "walls"; m.id = i;
       m.type = visualization_msgs::msg::Marker::CUBE;
-      if (i < 2) { 
+      if (i < 2) {
         m.pose.position.x = (i == 0) ? x_len / 2.0 + thick / 2.0 : -x_len / 2.0 - thick / 2.0;
         m.scale.x = thick; m.scale.y = y_len + 2.0 * thick;
-      } else { 
+      } else {
         m.pose.position.y = (i == 2) ? y_len / 2.0 + thick / 2.0 : -y_len / 2.0 - thick / 2.0;
         m.scale.x = x_len + 2.0 * thick; m.scale.y = thick;
       }
@@ -575,7 +578,9 @@ private:
     wall_pub_->publish(ma);
   }
 
-  void reset_callback(const std::shared_ptr<std_srvs::srv::Empty::Request>, std::shared_ptr<std_srvs::srv::Empty::Response>)
+  void reset_callback(
+    const std::shared_ptr<std_srvs::srv::Empty::Request>,
+    std::shared_ptr<std_srvs::srv::Empty::Response>)
   {
     reset_to_initial_pose();
     publish_walls();
@@ -705,7 +710,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::UInt64>::SharedPtr timestep_pub_;
 
   /// \brief Publisher for arena elements (walls and obstacles)
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr wall_pub_, obs_pub_, seen_obs_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr wall_pub_, obs_pub_,
+    seen_obs_pub_;
 
   /// \brief Publisher for the ground truth robot path
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
@@ -736,4 +742,3 @@ int main(int argc, char * argv[])
   rclcpp::shutdown();
   return 0;
 }
-

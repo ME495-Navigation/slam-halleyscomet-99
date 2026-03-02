@@ -4,11 +4,11 @@
 ## Package List
 This repository consists of several ROS packages:
 
-- **turtlelib** - A standalone C++ library for 2D rigid body transformations ($SE(2)$), differential drive kinematics, geometric primitives, and SVG visualization.
-- **nuturtle_description** - URDF files, meshes, and launch files for visualizing the Nuturtle Burger robot.
-- **nusim** - A simulation package providing a ground-truth environment with arena walls, obstacles, and a kinematic robot simulator.
+- **turtlelib** - A standalone C++ library for 2D rigid body transformations ($SE(2)$), differential drive kinematics, geometric primitives, SVG visualization, and the core **Extended Kalman Filter (EKF)** math.
+- **nuslam** - The SLAM package implementing a **Feature-Based EKF SLAM** algorithm with known data association. It enables simultaneous robot pose estimation and landmark tracking.
+- **nusim** - A simulation package providing a ground-truth environment with arena walls, obstacles, physical noise modeling (slip/input noise), and a kinematic robot simulator.
 - **nuturtle_control** - The core control package that implements odometry, motor command translation, and circular trajectory nodes.
-
+- **nuturtle_description** - URDF files, meshes, and launch files for visualizing the Nuturtle Burger robot in different configurations (Red, Blue, Green).
 ## System Demonstrations
 
 ### Simulation Testing

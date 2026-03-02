@@ -64,7 +64,7 @@ public:
     // 2. Initialize ROS interfaces
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
     odom_pub_ = create_publisher<nav_msgs::msg::Odometry>("odom", 10);
-    
+
     // Initialize Path Publisher
     path_pub_ = create_publisher<nav_msgs::msg::Path>("~/path", 10);
     path_msg_.header.frame_id = odom_id_;
@@ -178,14 +178,15 @@ private:
       diff_robot_.wheel_radius(),
       turtlelib::Transform2D({request->x, request->y}, request->theta)
     );
-    
+
     // Set flag to sync wheel offsets on next joint_state message
     sync_wheels_ = true;
 
     // Clear the path when resetting pose
     path_msg_.poses.clear();
-    
-    RCLCPP_INFO_STREAM(get_logger(), "Odometry and Path reset. Waiting for next joint_state to sync wheels.");
+
+    RCLCPP_INFO_STREAM(get_logger(),
+        "Odometry and Path reset. Waiting for next joint_state to sync wheels.");
   }
 
   // Member variables

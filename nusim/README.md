@@ -1,15 +1,15 @@
 # Nusim
-A simulated environment for the Nuturtle robot. This package provides a ground-truth simulation authorized to manage robot poses, arena boundaries, and obstacles. It integrates with RViz2 for 3D visualization using standard ROS 2 message types.
+A simulated environment for the Nuturtle robot. This package provides a ground-truth simulation authorized to manage robot poses, arena boundaries, and obstacles. It integrates with RViz2 for 3D visualization and simulates physical phenomena such as wheel slip, sensor noise, and collisions.
 
 ## Visualization
-Below is a screenshot of the simulation environment including the "red" ground-truth robot, the arena walls, and cylindrical obstacles.
+The simulation environment includes the **red** ground-truth robot, the arena walls, and cylindrical obstacles. It also supports visualization of a **fake sensor** (detecting relative landmark positions).
 
 ![Nusim Visualization](images/nusim_rviz.png)
 
 ## Launch Files
 * **`nusim.launch.xml`**: The primary entry point for the simulation.
     * Starts the `nusimulator` node.
-    * Loads the "red" robot model using `nuturtle_description`.
+    * Loads the **red** robot model using `nuturtle_description`.
     * Launches `rviz2` with a pre-configured view.
     * **Arguments**:
         * `config_file`: Path to a `.yaml` file to configure the simulator. (Default: `config/basic_world.yaml`).
@@ -19,21 +19,35 @@ The `nusimulator` node is configured via the following parameters:
 
 ### Simulation Settings
 * **`rate`** (int): The frequency of the simulation loop in Hz. Default: `100`.
-* **`timestep`** (uint64): Published to `~/timestep`, tracks the number of simulation cycles since start/reset.
+* **`draw_only`** (bool): If true, the node only publishes markers for walls and obstacles without updating robot physics.
 
 ### Robot Initial Pose
-* **`x0`** (float): Initial x-coordinate of the robot in `nusim/world`. Default: `0.0`.
-* **`y0`** (float): Initial y-coordinate of the robot in `nusim/world`. Default: `0.0`.
-* **`theta0`** (float): Initial heading of the robot in radians. Default: `0.0`.
+* **`x0`**, **`y0`** (float): Initial coordinates of the robot in `nusim/world`.
+* **`theta0`** (float): Initial heading of the robot in radians.
 
-### Arena Geometry
-* **`arena_x_length`** (float): Length of the rectangular arena along the x-axis (meters).
-* **`arena_y_length`** (float): Length of the rectangular arena along the y-axis (meters).
+### Noise & Physics (New)
+* **`input_noise`** (double): Variance of Gaussian noise added to the commanded wheel velocities.
+* **`slip_fraction`** (double): Range of uniform random noise applied to simulate wheel slip (applied to the physics layer).
+* **`motor_cmd_per_rad_sec`** (double): Scaling factor to convert motor commands to angular velocity.
+* **`encoder_ticks_per_rad`** (double): Ticks per radian for simulated encoders.
 
-### Obstacles
-* **`obstacles.x`** (double_array): List of x-coordinates for cylindrical obstacles.
-* **`obstacles.y`** (double_array): List of y-coordinates for cylindrical obstacles.
-* **`obstacles.r`** (float): The radius of the obstacles in meters.
+### Collision & Sensor (New)
+* **`collision_radius`** (double): The radius used for robot-obstacle and robot-wall collision detection.
+* **`max_range`** (double): Maximum detection range for the fake landmark sensor.
+* **`basic_sensor_variance`** (double): Variance of Gaussian noise added to the relative $(x, y)$ landmark measurements.
+
+### Arena & Obstacles
+* **`arena_x_length`**, **`arena_y_length`** (float): Dimensions of the arena.
+* **`obstacles.x`**, **`obstacles.y`** (double_array): Coordinates of cylindrical obstacles.
+* **`obstacles.r`** (float): Radius of the obstacles.
+
+## Topics
+* **`~/timestep`** (`std_msgs/msg/UInt64`): Current simulation cycle count.
+* **`~/real_walls`** (`visualization_msgs/msg/MarkerArray`): Markers for arena boundaries.
+* **`~/real_obstacles`** (`visualization_msgs/msg/MarkerArray`): Ground truth obstacle markers.
+* **`red/sensor_data`** (`nuturtlebot_msgs/msg/SensorData`): Simulated wheel encoder readings.
+* **`red/joint_states`** (`sensor_msgs/msg/JointState`): Joint positions of the simulated robot.
+* **`/fake_sensor`** (`visualization_msgs/msg/MarkerArray`): Noisy relative landmark positions for SLAM.
 
 ## Services
-* **`~/reset`** (`std_srvs/srv/Empty`): Restores the simulation to the initial state defined by the current parameters. This resets the timestep to zero and teleports the robot back to $(x_0, y_0, \theta_0)$.
+* **`~/reset`** (`std_srvs/srv/Empty`): Restores the simulation to the initial state (resets timestep, pose, and clears paths).

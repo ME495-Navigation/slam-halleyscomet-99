@@ -2,7 +2,10 @@
 This package implements the control system and odometry tracking for the Nuturtle robot. It bridges the gap between high-level geometry commands and the physical/simulated hardware, while maintaining a real-time estimate of the robot's pose.
 
 ## Visualization
-Below is a demonstration of the `start_robot.launch.xml` in simulation mode. The **red** robot represents the ground truth from `nusimulator`, and the **blue** robot represents the pose estimated by the `odometry` node.
+Below is a demonstration of the `start_robot.launch.xml` in simulation mode. 
+- **Red Robot**: Ground truth from `nusimulator`.
+- **Blue Robot**: Pure odometry pose estimated by the `odometry` node.
+- **Green Robot** (New): Estimated pose from the SLAM algorithm (if running `nuslam`).
 
 
 
@@ -18,9 +21,9 @@ Below is a demonstration of the `start_robot.launch.xml` in simulation mode. The
 Translates between standard ROS messages and Nuturtle-specific hardware messages.
 * **Subscribes**: 
     * `cmd_vel` (`geometry_msgs/msg/Twist`): Target velocity.
-    * `sensor_data` (`nuturtlebot_msgs/msg/SensorData`): Encoder feedback.
+    * `sensor_data` (`nuturtlebot_msgs/msg/SensorData`): Encoder feedback from the robot.
 * **Publishes**:
-    * `wheel_cmd` (`nuturtlebot_msgs/msg/WheelCommands`): Commands sent to the motors.
+    * `wheel_cmd` (`nuturtlebot_msgs/msg/WheelCommands`): Commands sent to the motors (scaled to -265 to 265).
     * `joint_states` (`sensor_msgs/msg/JointState`): Current wheel positions in radians.
 
 ### `odometry`
@@ -28,16 +31,18 @@ Tracks the robot's pose over time based on wheel joint states.
 * **Subscribes**:
     * `joint_states` (`sensor_msgs/msg/JointState`): Radian wheel positions.
 * **Publishes**:
-    * `odom` (`nav_msgs/msg/Odometry`): The calculated pose and velocity.
+    * `odom` (`nav_msgs/msg/Odometry`): The calculated pose and velocity in the `odom` frame.
+    * `~/odom_path` (`nav_msgs/msg/Path`): The uncorrected history of robot positions.
 * **Broadcasts**:
-    * TF Transform: `odom` -> `blue/base_footprint`.
+    * **TF Transform**: `odom` -> `blue/base_footprint`. 
+    * *Note: When running SLAM, an additional transform `nusim/world` -> `blue/base_footprint` may be used to visualize pure drift.*
 
 ### `circle`
 A high-level controller that drives the robot in a circular path.
 * **Publishes**:
     * `cmd_vel` (`geometry_msgs/msg/Twist`): Constant velocity command.
 * **Services**:
-    * `control` (`nuturtle_control/srv/Control`): Set the `velocity` and `radius`.
+    * `control` (`nuturtle_control/srv/Control`): Set the `velocity` and `radius` for the circle.
 
 ## Usage & Command Lines
 

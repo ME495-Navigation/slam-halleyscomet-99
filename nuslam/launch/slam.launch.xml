@@ -19,6 +19,12 @@
     <remap from="joint_states" to="green/joint_states" />
   </node>
 
+  <node pkg="robot_state_publisher" exec="robot_state_publisher" name="blue_rsp">
+    <param name="robot_description" value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=blue')" />
+    <param name="frame_prefix" value="blue/" />
+    <remap from="robot_description" to="blue/robot_description" />
+    </node>
+
   <group if="$(eval '\'$(var robot)\' == \'nusim\'')">
     <include file="$(find-pkg-share nuturtle_control)/launch/start_robot.launch.xml">
       <arg name="cmd_src" value="$(var cmd_src)" />
