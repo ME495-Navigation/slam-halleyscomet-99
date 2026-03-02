@@ -43,7 +43,7 @@ TEST_CASE("odometry ROS API", "[odometry]") {
 
   // --- Test Case 2: TF Broadcaster ---
   SECTION("odometry node publishes odom to base_footprint transform") {
-    // CRITICAL: Reset odometry to (0,0,0) specifically for this section
+    // Reset odometry to (0,0,0) specifically for this section
     // to ensure we test the Identity Transformation requirement.
     auto client = node->create_client<nuturtle_control::srv::InitialPose>("initial_pose");
     REQUIRE(client->wait_for_service(5s));

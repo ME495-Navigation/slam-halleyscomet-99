@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(turtlelib)
 
 # --- Compiler Settings ---
-# Enable C++23 support
+# Enable C++23 support as per modern robotics standards
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -13,28 +13,37 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
   message(FATAL_ERROR "No in-source builds allowed. Please create a separate build directory.")
 endif()
 
+# --- Dependencies ---
+# Eigen3 is required for EKF matrix math. We find it here to use it during build.
+find_package(Eigen3 REQUIRED)
+
 # --- Library Target ---
-# Create the turtlelib library from geometry and SE(2) implementation files
+# Create the turtlelib library from implementation files
 add_library(turtlelib 
     src/geometry2d.cpp
     src/se2d.cpp
     src/svg.cpp
     src/diff_drive.cpp
+    src/ekf.cpp
 )
 
 # Set include directories for the library
-# Use BUILD_INTERFACE for local compilation and INSTALL_INTERFACE for exported use
+# PUBLIC link ensures that packages using turtlelib see these headers
 target_include_directories(turtlelib
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
+# Link against Eigen3
+# Using PUBLIC ensures that consumers (like nusim/nuslam) inherit Eigen3 headers/flags
+target_link_libraries(turtlelib PUBLIC Eigen3::Eigen)
+
 # Apply mandatory warning flags and conformance settings
 target_compile_options(turtlelib PUBLIC -Wall -Wextra -Wpedantic)
 
-# --- Executable Target ---
-# Create the converter utility program
+# --- Executable Targets ---
+# Standalone utilities linked against the library
 add_executable(converter src/converter.cpp)
 
 # Link the converter against the turtlelib library
@@ -42,9 +51,6 @@ target_link_libraries(converter turtlelib)
 
 add_executable(frame_main src/frame_main.cpp)
 target_link_libraries(frame_main turtlelib)
-
-install(TARGETS frame_main
-        DESTINATION bin)
 
 # --- Doxygen Documentation ---
 # Find Doxygen and provide an option to build documentation
@@ -60,10 +66,10 @@ if(DOXYGEN_FOUND AND BUILD_DOCS)
     doxygen_add_docs(doxygen include/ src/ README.md ALL)
 endif()
 
-# --- Installation Rules ---
+# --- Installation and Export Rules ---
 
-# Define installation for the library and the executable
-install(TARGETS turtlelib converter
+# 1. Define which targets to install and assign them to an export set named 'turtlelib-targets'
+install(TARGETS turtlelib converter frame_main
     EXPORT turtlelib-targets
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
@@ -71,14 +77,31 @@ install(TARGETS turtlelib converter
     INCLUDES DESTINATION include
 )
 
-# Install the headers into the system include directory
+# 2. Install header files
 install(DIRECTORY include/turtlelib DESTINATION include)
 
-# Export the targets so they can be found via find_package(turtlelib)
-# This allows other packages to use turtlelib::turtlelib
+# 3. Generate and install the 'targets' file. 
+# This file contains the actual library locations and requirements (like Eigen3::Eigen).
 install(EXPORT turtlelib-targets
-    FILE turtlelib-config.cmake
+    FILE turtlelib-targets.cmake
     NAMESPACE turtlelib::
+    DESTINATION lib/cmake/turtlelib
+)
+
+# 4. Create a custom Config file.
+# This is the file find_package(turtlelib) actually looks for.
+# It MUST find Eigen3 first so that Eigen3::Eigen is defined before loading our targets.
+include(CMakePackageConfigHelpers)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/turtlelib-config.cmake"
+"include(CMakeFindDependencyMacro)
+# Ensure Eigen3 is found by any package that finds turtlelib
+find_dependency(Eigen3 REQUIRED)
+# Include the exported targets generated in step 3
+include(\"\${CMAKE_CURRENT_LIST_DIR}/turtlelib-targets.cmake\")
+")
+
+# 5. Install the generated config file
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/turtlelib-config.cmake"
     DESTINATION lib/cmake/turtlelib
 )
 
