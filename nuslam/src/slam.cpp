@@ -151,7 +151,7 @@ private:
     double stdev = std::sqrt(sq_sum / angles.size());
 
     // Thresholds from Xavier et. al. (can be tuned)
-    return (stdev < 0.15);
+    return  stdev < 0.15;
   }
 
   /// \brief Creates a cylinder marker for RViz.

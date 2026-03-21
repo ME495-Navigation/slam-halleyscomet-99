@@ -19,7 +19,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(turtlelib REQUIRED) 
+find_package(turtlelib REQUIRED)
 find_package(nuturtlebot_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 
@@ -67,9 +67,12 @@ install(DIRECTORY launch config
 # --- Testing and Linters ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
+  find_package(ament_cmake_gtest REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+  ament_add_gtest(circle_tests tests/test_circle.cpp)
+  target_link_libraries(circle_tests turtlelib::turtlelib)
 endif()
 
 ament_package()

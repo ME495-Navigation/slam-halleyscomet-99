@@ -45,7 +45,7 @@ public:
     declare_parameter("laser_height", 0.172);
 
     dist_threshold_ = get_parameter("threshold").as_double();
-    laser_height_   = get_parameter("laser_height").as_double();
+    laser_height_ = get_parameter("laser_height").as_double();
 
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       "/nusimulator/laser_scan", 10,
@@ -73,7 +73,7 @@ private:
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
   {
     dist_threshold_ = get_parameter("threshold").as_double();
-    laser_height_   = get_parameter("laser_height").as_double();
+    laser_height_ = get_parameter("laser_height").as_double();
 
     // -------------------------------------------------------------------------
     // A. Polar to Cartesian conversion.
@@ -206,7 +206,7 @@ private:
       const double b = std::atan2(p2.y - p.y, p2.x - p.x);
       double diff = a - b;
       // Normalise to [−π, π].
-      while (diff >  M_PI) {diff -= 2.0 * M_PI;}
+      while (diff > M_PI) {diff -= 2.0 * M_PI;}
       while (diff < -M_PI) {diff += 2.0 * M_PI;}
       angles.push_back(std::abs(diff));
     }
@@ -222,7 +222,7 @@ private:
     for (const double a : angles) {sq_sum += (a - mean) * (a - mean);}
     const double stdev = std::sqrt(sq_sum / n);
 
-    return (stdev < 0.25 && mean_deg > 80.0 && mean_deg < 170.0);
+    return  stdev < 0.25 && mean_deg > 80.0 && mean_deg < 170.0;
   }
 
   // ---------------------------------------------------------------------------
