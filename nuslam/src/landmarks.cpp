@@ -6,6 +6,9 @@
 ///     laser_height (double): Height of the laser scan frame above the ground plane [m].
 ///         Used to compensate marker z so detected cylinders rest on the ground (z = 0).
 ///         Default 0.172 m matches the TurtleBot3 Burger LiDAR mount height.
+///     marker_lifetime (double): Duration in seconds that each published marker remains
+///         visible in RViz before expiring.  Set longer than the scan period to avoid
+///         flickering on the real robot (default 4.0 s for ~2.5 Hz LiDAR).
 /// PUBLISHES:
 ///     ~/detected_landmarks (visualization_msgs::msg::MarkerArray): Magenta cylinders at
 ///         fitted landmark locations expressed in the laser scan frame.
@@ -13,6 +16,7 @@
 ///         ID, used to debug the clustering step in RViz.
 /// SUBSCRIBES:
 ///     /nusimulator/laser_scan (sensor_msgs::msg::LaserScan): Simulated or real LIDAR data.
+///         When running on the real robot this topic is remapped to /scan in the launch file.
 
 #include <chrono>
 #include <functional>
@@ -39,16 +43,19 @@ public:
   : Node("landmarks")
   {
     declare_parameter("threshold", 0.15);
-    // TurtleBot3 Burger LiDAR is mounted 0.172 m above the base_footprint (ground) frame.
-    // Landmark markers are published in the laser scan frame; subtracting this height from
-    // the marker z keeps the cylinder base flush with the ground plane in the world frame.
     declare_parameter("laser_height", 0.172);
+    declare_parameter("marker_lifetime", 4.0);
 
     dist_threshold_ = get_parameter("threshold").as_double();
     laser_height_ = get_parameter("laser_height").as_double();
+    marker_lifetime_ = get_parameter("marker_lifetime").as_double();
 
+    // Use BEST_EFFORT QoS to match the real TurtleBot3 LiDAR driver, which publishes
+    // with BEST_EFFORT reliability.  A RELIABLE subscriber would be incompatible and
+    // receive no messages from the physical sensor.
+    const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
-      "/nusimulator/laser_scan", 10,
+      "/nusimulator/laser_scan", qos,
       std::bind(&Landmarks::scan_callback, this, std::placeholders::_1));
 
     landmark_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -57,8 +64,9 @@ public:
       "~/clusters", 10);
 
     RCLCPP_INFO(
-      get_logger(), "Landmark node ready. threshold=%.3f m  laser_height=%.3f m",
-      dist_threshold_, laser_height_);
+      get_logger(),
+      "Landmark node ready. threshold=%.3f m  laser_height=%.3f m  marker_lifetime=%.1f s",
+      dist_threshold_, laser_height_, marker_lifetime_);
   }
 
 private:
@@ -74,11 +82,10 @@ private:
   {
     dist_threshold_ = get_parameter("threshold").as_double();
     laser_height_ = get_parameter("laser_height").as_double();
+    marker_lifetime_ = get_parameter("marker_lifetime").as_double();
 
     // -------------------------------------------------------------------------
     // A. Polar to Cartesian conversion.
-    // Retain only finite readings within the sensor's valid range.
-    // LaserScan ranges are float; promote to double throughout (coding standard).
     // -------------------------------------------------------------------------
     std::vector<turtlelib::Point2D> points;
     points.reserve(msg->ranges.size());
@@ -96,9 +103,6 @@ private:
 
     // -------------------------------------------------------------------------
     // B. Distance-based clustering.
-    // Consecutive points separated by less than dist_threshold_ belong to the
-    // same cluster.  MIN_CLUSTER_SIZE = 3 is the minimum for fit_circle(); using
-    // a larger value would discard distant pillars that produce only a few points.
     // -------------------------------------------------------------------------
     constexpr size_t MIN_CLUSTER_SIZE = 3;
 
@@ -124,9 +128,6 @@ private:
 
     // -------------------------------------------------------------------------
     // C. Wrap-around merge for 360° scanners.
-    // A 360° scan can start in the middle of a physical cluster, splitting it
-    // between the last cluster (tail) and the first cluster (head).  Merge when
-    // those boundary points are within the distance threshold.
     // -------------------------------------------------------------------------
     if (clusters.size() > 1) {
       const double d_wrap =
@@ -151,9 +152,7 @@ private:
         try {
           const auto circle = turtlelib::fit_circle(cluster);
 
-          // Accept only radii plausible for the nuturtle pillars (r ≈ 0.038 m).
-          // Upper bound 0.12 m gives margin for partial-arc fitting error.
-          if (circle.radius > 0.01 && circle.radius < 0.12) {
+          if (circle.radius > 0.01 && circle.radius < 0.20) {
             landmark_ma.markers.push_back(
               create_landmark_marker(circle, id++,
                 msg->header.frame_id, msg->header.stamp));
@@ -177,21 +176,15 @@ private:
   /// Reference: J. Xavier et al., "Fast line, arc/circle and leg detection from laser
   /// scan data in a Player driver," ICRA 2005.
   ///
-  /// Let P1 and P2 be the cluster endpoints and P any interior point.  If the points
-  /// lie on a circle, the inscribed angle ∠(P1, P, P2) is constant for all interior P.
-  /// A low standard deviation and a mean in the expected degree range indicate a
-  /// circular arc rather than a wall segment or noise.
-  ///
-  /// Threshold rationale for nuturtle pillars:
-  ///   - Close range  → wide arc  → smaller inscribed angle (~90°).
-  ///   - Long range   → narrow arc → larger inscribed angle (~160°+).
-  ///   - Wall segments have mean ≈ 0° or 180° and high stdev → rejected.
+  /// Thresholds are relaxed relative to the simulation values to account for the
+  /// higher sensor noise of the physical LiDAR:
+  ///   - stdev < 0.35 rad  (simulation: 0.25)
+  ///   - mean  60°–170°    (simulation: 80°–170°)
   ///
   /// \param cluster Vector of 2D points belonging to a single candidate cluster.
   /// \return True if the cluster is geometrically consistent with a circular arc.
   bool is_circle(const std::vector<turtlelib::Point2D> & cluster)
   {
-    // Fewer than 4 points yields only 1 interior angle; stdev is undefined.
     if (cluster.size() < 4) {return false;}
 
     const auto p1 = cluster.front();
@@ -205,7 +198,6 @@ private:
       const double a = std::atan2(p1.y - p.y, p1.x - p.x);
       const double b = std::atan2(p2.y - p.y, p2.x - p.x);
       double diff = a - b;
-      // Normalise to [−π, π].
       while (diff > M_PI) {diff -= 2.0 * M_PI;}
       while (diff < -M_PI) {diff += 2.0 * M_PI;}
       angles.push_back(std::abs(diff));
@@ -222,7 +214,7 @@ private:
     for (const double a : angles) {sq_sum += (a - mean) * (a - mean);}
     const double stdev = std::sqrt(sq_sum / n);
 
-    return  stdev < 0.25 && mean_deg > 80.0 && mean_deg < 170.0;
+    return  stdev < 0.35 && mean_deg > 60.0 && mean_deg < 170.0;
   }
 
   // ---------------------------------------------------------------------------
@@ -231,16 +223,11 @@ private:
 
   /// \brief Builds a magenta cylinder marker centred at the fitted circle centre.
   ///
-  /// The marker is expressed in the laser scan frame (which is laser_height_ above
-  /// the ground).  To place the cylinder base on the ground plane (z = 0 in world),
-  /// the marker z is set to (0.125 - laser_height_):
-  ///
-  ///   world_z = scan_frame_z + laser_height_
-  ///           = (0.125 - laser_height_) + laser_height_
-  ///           = 0.125 m   ← cylinder centre at half its 0.25 m height above ground.
-  ///
-  /// The diameter is fixed to the known pillar size (2 × 0.038 m = 0.076 m) because
-  /// Pratt fitting on a partial arc overestimates the true radius.
+  /// The marker z compensates for the laser scan frame height above the ground:
+  ///   world_z = (0.125 - laser_height_) + laser_height_ = 0.125 m
+  /// so the cylinder base rests on z = 0.  The diameter is fixed to the known
+  /// pillar size (0.076 m) because Pratt fitting on a partial arc overestimates
+  /// the true radius.  Lifetime is marker_lifetime_ to prevent flickering.
   ///
   /// \param c     Fitted circle whose centre determines the marker XY position.
   /// \param id    Unique integer marker ID within this array.
@@ -263,36 +250,33 @@ private:
 
     m.pose.position.x = c.center.x;
     m.pose.position.y = c.center.y;
-
-    // Compensate for the laser scan frame being laser_height_ above the ground so
-    // that the cylinder base rests on z = 0 in the world frame.
     m.pose.position.z = 0.125 - laser_height_;
 
-    // Fixed pillar diameter: 2 × 0.038 m.  Do not use c.radius — it is the
-    // radius of the fitted circle arc, which overestimates the pillar radius.
     constexpr double pillar_diameter = 0.076;
     m.scale.x = pillar_diameter;
     m.scale.y = pillar_diameter;
     m.scale.z = 0.25;
 
-    // Magenta distinguishes detected landmarks from the red real obstacles.
     m.color.r = 1.0;
     m.color.g = 0.0;
     m.color.b = 1.0;
     m.color.a = 1.0;
 
-    // Auto-expire after two scan periods so stale markers disappear when a
-    // landmark leaves the sensor's field of view or the robot moves away.
-    m.lifetime = rclcpp::Duration::from_seconds(0.4);
+    m.lifetime = rclcpp::Duration::from_seconds(marker_lifetime_);
 
     return m;
   }
 
-  /// \brief Publishes coloured sphere markers for every point in every cluster.
+  /// \brief Publishes small coloured sphere markers for every point in every cluster.
   ///
-  /// Clusters cycle through red, green, and blue so adjacent clusters remain
-  /// visually distinct in RViz.  These markers are only for debugging the
-  /// clustering step and are published on ~/clusters.
+  /// A DELETEALL marker with id=-1 is sent first each scan cycle to clear all stale
+  /// markers from the previous cycle.  The id is set to -1 (not the default 0) to
+  /// avoid a "Duplicate Marker" warning: both DELETEALL and the first point marker
+  /// would otherwise share ns="clusters" and id=0 in the same MarkerArray message.
+  ///
+  /// Sphere diameter is 0.01 m (1 cm) for a clean, fine-grained visualisation.
+  /// Clusters cycle through red / green / blue so adjacent clusters are visually
+  /// distinct.  Lifetime matches marker_lifetime_ to prevent flickering.
   ///
   /// \param clusters Each inner vector holds the 2D scan points of one cluster.
   /// \param frame    TF frame ID for the marker header.
@@ -303,6 +287,18 @@ private:
     rclcpp::Time stamp)
   {
     visualization_msgs::msg::MarkerArray ma;
+
+    // Send DELETEALL first to clear stale markers from the previous scan cycle.
+    // id=-1 avoids a duplicate-marker warning with the first point marker (id=0)
+    // that would otherwise occur because both share the same namespace.
+    visualization_msgs::msg::Marker delete_all;
+    delete_all.header.frame_id = frame;
+    delete_all.header.stamp = stamp;
+    delete_all.ns = "clusters";
+    delete_all.id = -1;
+    delete_all.action = visualization_msgs::msg::Marker::DELETEALL;
+    ma.markers.push_back(delete_all);
+
     int point_id = 0;
 
     for (size_t i = 0; i < clusters.size(); ++i) {
@@ -313,9 +309,11 @@ private:
         m.ns = "clusters";
         m.id = point_id++;
         m.type = visualization_msgs::msg::Marker::SPHERE;
-        m.scale.x = 0.03;
-        m.scale.y = 0.03;
-        m.scale.z = 0.03;
+        // Small spheres (1 cm diameter) give a fine-grained view of the
+        // cluster point distribution without obscuring nearby structure.
+        m.scale.x = 0.01;
+        m.scale.y = 0.01;
+        m.scale.z = 0.01;
         m.pose.position.x = p.x;
         m.pose.position.y = p.y;
         m.pose.position.z = 0.01;
@@ -323,7 +321,7 @@ private:
         m.color.g = (i % 3 == 1) ? 1.0 : 0.0;
         m.color.b = (i % 3 == 2) ? 1.0 : 0.0;
         m.color.a = 1.0;
-        m.lifetime = rclcpp::Duration::from_seconds(0.4);
+        m.lifetime = rclcpp::Duration::from_seconds(marker_lifetime_);
         ma.markers.push_back(m);
       }
     }
@@ -339,8 +337,10 @@ private:
   double dist_threshold_;
 
   /// \brief Height of the laser scan frame above the ground plane [m].
-  ///        Subtracted from marker z so detected cylinders rest on z = 0 in world.
   double laser_height_;
+
+  /// \brief Lifetime of published markers [s].
+  double marker_lifetime_;
 
   /// \brief Subscription to the raw LIDAR scan data.
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
