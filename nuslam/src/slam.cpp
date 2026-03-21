@@ -1,216 +1,535 @@
 /// \file
-/// \brief Landmark detection node that clusters laser scans and fits circles to detected objects.
+/// \brief EKF SLAM node with unknown data association using Euclidean distance gating.
 ///
-/// \author Halley (Chenwan Zhong)
-/// \date March 2026
+/// The state vector is ξ = [x, y, θ, m1x, m1y, ..., mNx, mNy]ᵀ.
+/// The prediction step uses differential-drive forward kinematics applied to
+/// wheel angle deltas from red/joint_states.  The measurement update uses
+/// range-bearing observations from the landmarks node.  Data association is
+/// performed by projecting measurements into the map frame and finding the
+/// nearest known landmark within a Euclidean distance gate.
+///
+/// Euclidean distance is preferred over Mahalanobis distance here because
+/// newly initialised landmarks carry a covariance of 1e6, which collapses
+/// the Mahalanobis distance to near zero for all incoming measurements and
+/// causes systematic false associations.
 ///
 /// PARAMETERS:
-///     threshold (double): Distance threshold for clustering laser points [m].
+///     wheel_radius (double): Radius of the robot wheels [m].
+///     track_width (double): Distance between wheel centres [m].
+///     process_noise (double): Diagonal variance of the robot-pose process noise.
+///     sensor_noise (double): Diagonal variance of the range/bearing sensor noise.
+///     assoc_threshold (double): Euclidean distance gate for data association [m].
 /// PUBLISHES:
-///     ~/detected_landmarks (visualization_msgs::msg::MarkerArray): Fitted landmark cylinders.
-///     ~/clusters (visualization_msgs::msg::MarkerArray): Colored points showing individual clusters.
+///     ~/path (nav_msgs::msg::Path): SLAM estimated robot trajectory (green).
+///     ~/map_landmarks (visualization_msgs::msg::MarkerArray): SLAM landmark estimates.
 /// SUBSCRIBES:
-///     /laser_scan (sensor_msgs::msg::LaserScan): Raw 2D LIDAR data.
+///     red/joint_states (sensor_msgs::msg::JointState): Wheel positions for prediction step.
+///     /landmarks/detected_landmarks (visualization_msgs::msg::MarkerArray): Fitted landmark
+///         positions in the laser scan frame, used as range-bearing measurements.
+/// BROADCASTS:
+///     map -> green/base_footprint: SLAM estimated robot pose.
 
-#include <chrono>
-#include <functional>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
-#include <cmath>
 
+#include <Eigen/Dense>
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include "nav_msgs/msg/path.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "sensor_msgs/msg/laser_scan.hpp"
-#include "visualization_msgs/msg/marker_array.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2_ros/transform_broadcaster.h"
+#include "turtlelib/diff_drive.hpp"
 #include "turtlelib/geometry2d.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
 
-using namespace std::chrono_literals;
-
-/// \brief Detects circular landmarks from 2D LIDAR scans using clustering and Pratt fitting.
-class Landmarks : public rclcpp::Node
+/// \brief EKF SLAM node implementing landmark-based localisation with unknown data association.
+class EkfSlam : public rclcpp::Node
 {
 public:
-  /// \brief Constructor for the Landmarks node.
-  Landmarks()
-  : Node("landmarks")
+  /// \brief Constructor: declares parameters, initialises EKF state, sets up ROS interfaces.
+  EkfSlam()
+  : Node("slam"),
+    process_noise_(1e-3),
+    sensor_noise_(1e-1),
+    assoc_threshold_(0.5),
+    n_landmarks_(0),
+    robot_(0.0, 0.0),
+    prev_left_(0.0),
+    prev_right_(0.0),
+    first_js_(true),
+    xi_(Eigen::VectorXd::Zero(3)),
+    Sigma_(Eigen::MatrixXd::Zero(3, 3)),
+    xi_odom_(Eigen::Vector3d::Zero())
   {
-    // 1. Parameters
-    declare_parameter("threshold", 0.15);
-    dist_threshold_ = get_parameter("threshold").as_double();
+    declare_parameter("wheel_radius", 0.033);
+    declare_parameter("track_width", 0.16);
+    declare_parameter("process_noise", 1e-3);
+    declare_parameter("sensor_noise", 1e-1);
+    // Gate threshold for data association.  Obstacles in this world are at
+    // least ~0.9 m apart, so 0.5 m safely separates distinct landmarks while
+    // tolerating moderate pose uncertainty during initialisation.
+    declare_parameter("assoc_threshold", 0.5);
 
-    // 2. Subscriptions
-    scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
-      "/laser_scan", 10, std::bind(&Landmarks::scan_callback, this, std::placeholders::_1));
+    const double wheel_radius = get_parameter("wheel_radius").as_double();
+    const double track_width  = get_parameter("track_width").as_double();
+    process_noise_   = get_parameter("process_noise").as_double();
+    sensor_noise_    = get_parameter("sensor_noise").as_double();
+    assoc_threshold_ = get_parameter("assoc_threshold").as_double();
 
-    // 3. Publishers
-    landmark_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      "~/detected_landmarks", 10);
-    cluster_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      "~/clusters", 10);
+    robot_ = turtlelib::DiffDrive(track_width, wheel_radius);
 
-    RCLCPP_INFO(get_logger(), "Landmark detection node started.");
+    joint_sub_ = create_subscription<sensor_msgs::msg::JointState>(
+      "red/joint_states", 10,
+      std::bind(&EkfSlam::joint_callback, this, std::placeholders::_1));
+
+    landmark_sub_ = create_subscription<visualization_msgs::msg::MarkerArray>(
+      "/landmarks/detected_landmarks", 10,
+      std::bind(&EkfSlam::landmark_callback, this, std::placeholders::_1));
+
+    path_pub_ = create_publisher<nav_msgs::msg::Path>("~/path", 10);
+    map_landmark_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+      "~/map_landmarks", 10);
+
+    tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
+
+    path_msg_.header.frame_id = "map";
+
+    RCLCPP_INFO(
+      get_logger(),
+      "EKF SLAM node ready. process_noise=%.2e sensor_noise=%.2e assoc_threshold=%.2f m",
+      process_noise_, sensor_noise_, assoc_threshold_);
   }
 
 private:
-  /// \brief Callback for LIDAR scans to perform clustering and circle fitting.
-  /// \param msg - The incoming laser scan message.
-  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+  // ---------------------------------------------------------------------------
+  // Callbacks
+  // ---------------------------------------------------------------------------
+
+  /// \brief EKF prediction step triggered by each wheel joint-state message.
+  /// \param msg Incoming JointState with cumulative wheel angles.
+  void joint_callback(const sensor_msgs::msg::JointState::SharedPtr msg)
   {
-    // A. Convert Scan to Cartesian Points (LIDAR Frame)
-    std::vector<turtlelib::Point2D> points;
-    for (size_t i = 0; i < msg->ranges.size(); ++i) {
-      const float r = msg->ranges[i];
-      if (r > msg->range_min && r < msg->range_max) {
-        const double angle = msg->angle_min + i * msg->angle_increment;
-        points.push_back({r * std::cos(angle), r * std::sin(angle)});
-      }
+    double left = 0.0, right = 0.0;
+    for (size_t i = 0; i < msg->name.size(); ++i) {
+      if (msg->name.at(i) == "wheel_left_joint")  {left  = msg->position.at(i);}
+      if (msg->name.at(i) == "wheel_right_joint") {right = msg->position.at(i);}
     }
 
-    if (points.empty()) {return;}
-
-    // B. Clustering based on distance threshold
-    std::vector<std::vector<turtlelib::Point2D>> clusters;
-    if (!points.empty()) {
-      std::vector<turtlelib::Point2D> current_cluster;
-      current_cluster.push_back(points[0]);
-
-      for (size_t i = 1; i < points.size(); ++i) {
-        if (turtlelib::distance(points[i], points[i - 1]) < dist_threshold_) {
-          current_cluster.push_back(points[i]);
-        } else {
-          clusters.push_back(current_cluster);
-          current_cluster.clear();
-          current_cluster.push_back(points[i]);
-        }
-      }
-      clusters.push_back(current_cluster);
+    if (first_js_) {
+      prev_left_  = left;
+      prev_right_ = right;
+      first_js_   = false;
+      return;
     }
 
-    // Handle Wrap-around (first and last cluster might be the same object)
-    if (clusters.size() > 1) {
-      if (turtlelib::distance(clusters.front().front(), clusters.back().back()) < dist_threshold_) {
-        clusters.front().insert(
-          clusters.front().begin(), clusters.back().begin(),
-          clusters.back().end());
-        clusters.pop_back();
-      }
-    }
+    const double dl = left  - prev_left_;
+    const double dr = right - prev_right_;
+    prev_left_  = left;
+    prev_right_ = right;
 
-    // C. Circle Fitting and Classification
-    visualization_msgs::msg::MarkerArray landmark_ma;
-    int id = 0;
-
-    for (const auto & cluster : clusters) {
-      // Step 1: Discard small clusters
-      if (cluster.size() < 3) {continue;}
-
-      // Step 2: Classification using Inscribed Angle Theorem
-      if (is_circle(cluster)) {
-        try {
-          // Step 3: Circular Regression (Pratt Method)
-          turtlelib::Circle circle = turtlelib::fit_circle(cluster);
-
-          // Step 4: Filter by known landmark size (optional but practical)
-          if (circle.radius > 0.02 && circle.radius < 0.15) {
-            landmark_ma.markers.push_back(
-              create_landmark_marker(circle, id++, msg->header.frame_id, msg->header.stamp));
-          }
-        } catch (const std::invalid_argument & e) {
-          continue;
-        }
-      }
-    }
-    landmark_pub_->publish(landmark_ma);
-    publish_cluster_markers(clusters, msg->header.frame_id, msg->header.stamp);
+    ekf_predict(dl, dr);
+    broadcast_transform(msg->header.stamp);
+    update_path(msg->header.stamp);
   }
 
-  /// \brief Validates if a cluster is likely a circle using the standard deviation of angles.
-  /// \param cluster - A group of Cartesian points.
-  /// \return True if the points form a circular arc.
-  bool is_circle(const std::vector<turtlelib::Point2D> & cluster)
+  /// \brief EKF measurement update triggered by each batch of detected landmarks.
+  /// \param msg Incoming MarkerArray of fitted landmark cylinder positions in the laser frame.
+  void landmark_callback(const visualization_msgs::msg::MarkerArray::SharedPtr msg)
   {
-    const auto p1 = cluster.front();
-    const auto p2 = cluster.back();
-    std::vector<double> angles;
+    // Do not process measurements until the first joint_states has been received.
+    // Before that the state and covariance are uninitialised.
+    if (first_js_) {return;}
+    if (msg->markers.empty()) {return;}
 
-    for (size_t i = 1; i < cluster.size() - 1; ++i) {
-      const auto p = cluster[i];
-      // Vectors from p to endpoints
-      const turtlelib::Vector2D v1 = p1 - p;
-      const turtlelib::Vector2D v2 = p2 - p;
-      angles.push_back(turtlelib::angle(v1, v2));
+    const rclcpp::Time stamp = msg->markers.at(0).header.stamp;
+
+    for (const auto & marker : msg->markers) {
+      if (marker.action != visualization_msgs::msg::Marker::ADD) {continue;}
+
+      // Landmark XY in red/base_scan frame (same XY as base_footprint for 2D SLAM).
+      const double lx    = marker.pose.position.x;
+      const double ly    = marker.pose.position.y;
+      const double r_m   = std::sqrt(lx * lx + ly * ly);
+      const double phi_m = std::atan2(ly, lx);
+
+      // Discard measurements outside the sensor's valid range.
+      if (r_m < 0.05 || r_m > 3.5) {continue;}
+
+      const int j = data_associate(r_m, phi_m);
+
+      if (j < 0) {
+        // No existing landmark within the gate: initialise a new one and
+        // immediately apply a measurement update to anchor its position.
+        add_landmark(r_m, phi_m);
+        ekf_update(r_m, phi_m, n_landmarks_ - 1);
+      } else {
+        ekf_update(r_m, phi_m, j);
+      }
     }
 
-    // Compute mean and standard deviation
-    double sum = 0.0;
-    for (double a : angles) {sum += a;}
-    double mean = sum / angles.size();
-
-    double sq_sum = 0.0;
-    for (double a : angles) {sq_sum += (a - mean) * (a - mean);}
-    double stdev = std::sqrt(sq_sum / angles.size());
-
-    // Thresholds from Xavier et. al. (can be tuned)
-    return  stdev < 0.15;
+    broadcast_transform(stamp);
+    publish_map_landmarks(stamp);
   }
 
-  /// \brief Creates a cylinder marker for RViz.
-  visualization_msgs::msg::Marker create_landmark_marker(
-    const turtlelib::Circle & c, int id, std::string frame, rclcpp::Time stamp)
+  // ---------------------------------------------------------------------------
+  // EKF core
+  // ---------------------------------------------------------------------------
+
+  /// \brief EKF prediction step: propagates robot pose and covariance.
+  ///
+  /// The body-frame displacement (dx_b, dy_b, dtheta) is computed from the
+  /// wheel deltas via a temporary zero-origin DiffDrive.  The world-frame
+  /// displacement is obtained by rotating the body displacement by θ:
+  ///   dx_w = dx_b cosθ − dy_b sinθ
+  ///   dy_w = dx_b sinθ + dy_b cosθ
+  /// The Jacobian off-diagonal entries follow from differentiating with
+  /// respect to θ.
+  ///
+  /// \param dl Change in left wheel angle [rad].
+  /// \param dr Change in right wheel angle [rad].
+  void ekf_predict(double dl, double dr)
   {
-    visualization_msgs::msg::Marker m;
-    m.header.frame_id = frame;
-    m.header.stamp = stamp;
-    m.ns = "detected_landmarks";
-    m.id = id;
-    m.type = visualization_msgs::msg::Marker::CYLINDER;
-    m.action = visualization_msgs::msg::Marker::ADD;
-    m.pose.position.x = c.center.x;
-    m.pose.position.y = c.center.y;
-    m.pose.position.z = 0.125;
-    m.scale.x = c.radius * 2.0;
-    m.scale.y = c.radius * 2.0;
-    m.scale.z = 0.25;
-    m.color.r = 1.0; m.color.g = 0.0; m.color.b = 1.0; m.color.a = 1.0; // Magenta
-    return m;
+    // Body-frame displacement from a fresh zero-origin diff-drive.
+    turtlelib::DiffDrive temp(robot_.track_width(), robot_.wheel_radius());
+    temp.forward_kinematics({dl, dr});
+    const double dx_b   = temp.configuration().translation().x;
+    const double dy_b   = temp.configuration().translation().y;
+    const double dtheta = temp.configuration().rotation();
+
+    const double theta = xi_(2);
+    const int    sz    = 3 + 2 * n_landmarks_;
+
+    // World-frame displacement.
+    const double dx_w = dx_b * std::cos(theta) - dy_b * std::sin(theta);
+    const double dy_w = dx_b * std::sin(theta) + dy_b * std::cos(theta);
+
+    // Jacobian of (dx_w, dy_w) w.r.t. θ.
+    const double g13 = -dx_b * std::sin(theta) - dy_b * std::cos(theta);
+    const double g23 =  dx_b * std::cos(theta) - dy_b * std::sin(theta);
+
+    // Update SLAM robot-pose estimate.
+    xi_(0) += dx_w;
+    xi_(1) += dy_w;
+    xi_(2)  = normalize_angle(xi_(2) + dtheta);
+
+    // Track pure odometry in parallel (no EKF correction).
+    // Used only to report the final odometry error in README.md.
+    const double theta_o = xi_odom_(2);
+    xi_odom_(0) += dx_b * std::cos(theta_o) - dy_b * std::sin(theta_o);
+    xi_odom_(1) += dx_b * std::sin(theta_o) + dy_b * std::cos(theta_o);
+    xi_odom_(2)  = normalize_angle(xi_odom_(2) + dtheta);
+
+    // Motion Jacobian F.
+    Eigen::MatrixXd F = Eigen::MatrixXd::Identity(sz, sz);
+    F(0, 2) = g13;
+    F(1, 2) = g23;
+
+    // Process noise Q: robot-pose block only.
+    Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(sz, sz);
+    Q(0, 0) = process_noise_;
+    Q(1, 1) = process_noise_;
+    Q(2, 2) = process_noise_;
+
+    Sigma_ = F * Sigma_ * F.transpose() + Q;
   }
 
-  /// \brief Publishes small spheres for every LIDAR point, colored by cluster ID.
-  void publish_cluster_markers(
-    const std::vector<std::vector<turtlelib::Point2D>> & clusters,
-    std::string frame, rclcpp::Time stamp)
+  /// \brief Data association via Euclidean distance gating in the map frame.
+  ///
+  /// The range-bearing measurement is projected into the map frame using the
+  /// current SLAM pose estimate.  The nearest known landmark within
+  /// assoc_threshold_ is returned as the associated landmark.
+  ///
+  /// Euclidean distance is used instead of Mahalanobis distance because newly
+  /// initialised landmarks carry a covariance of 1e6, which collapses the
+  /// Mahalanobis distance to near zero for all measurements, causing systematic
+  /// false associations and EKF divergence.
+  ///
+  /// \param r_m   Measured range [m].
+  /// \param phi_m Measured bearing [rad].
+  /// \return Index of the associated landmark, or −1 for a new landmark.
+  int data_associate(double r_m, double phi_m) const
+  {
+    // Project measurement into the map frame.
+    const double mx_pred = xi_(0) + r_m * std::cos(phi_m + xi_(2));
+    const double my_pred = xi_(1) + r_m * std::sin(phi_m + xi_(2));
+
+    double min_dist = assoc_threshold_;
+    int    best_j   = -1;
+
+    for (int j = 0; j < n_landmarks_; ++j) {
+      const double ddx  = mx_pred - xi_(3 + 2 * j);
+      const double ddy  = my_pred - xi_(3 + 2 * j + 1);
+      const double dist = std::sqrt(ddx * ddx + ddy * ddy);
+
+      if (dist < min_dist) {
+        min_dist = dist;
+        best_j   = j;
+      }
+    }
+
+    return best_j;
+  }
+
+  /// \brief Extends the state vector and covariance to include a new landmark.
+  ///
+  /// Initial position is computed from the SLAM-estimated robot pose and the
+  /// range-bearing measurement.  Initial covariance is a large diagonal block
+  /// representing complete positional uncertainty.
+  ///
+  /// \param r_m   Measured range [m].
+  /// \param phi_m Measured bearing [rad].
+  void add_landmark(double r_m, double phi_m)
+  {
+    const double theta = xi_(2);
+    const double mx    = xi_(0) + r_m * std::cos(phi_m + theta);
+    const double my    = xi_(1) + r_m * std::sin(phi_m + theta);
+
+    const int old_sz = 3 + 2 * n_landmarks_;
+    const int new_sz = old_sz + 2;
+
+    // Extend state vector.
+    Eigen::VectorXd xi_new = Eigen::VectorXd::Zero(new_sz);
+    xi_new.head(old_sz) = xi_;
+    xi_new(old_sz)      = mx;
+    xi_new(old_sz + 1)  = my;
+    xi_ = xi_new;
+
+    // Extend covariance with a large initial block for the new landmark.
+    constexpr double INIT_LM_COV = 1e6;
+    Eigen::MatrixXd Sigma_new = Eigen::MatrixXd::Zero(new_sz, new_sz);
+    Sigma_new.topLeftCorner(old_sz, old_sz) = Sigma_;
+    Sigma_new(old_sz,     old_sz)           = INIT_LM_COV;
+    Sigma_new(old_sz + 1, old_sz + 1)       = INIT_LM_COV;
+    Sigma_ = Sigma_new;
+
+    n_landmarks_++;
+  }
+
+  /// \brief EKF measurement update for an associated landmark.
+  ///
+  /// Computes the range-bearing Jacobian, Kalman gain, and applies the
+  /// standard state and covariance corrections.
+  ///
+  /// \param r_m   Measured range [m].
+  /// \param phi_m Measured bearing [rad].
+  /// \param j     Index of the associated landmark.
+  void ekf_update(double r_m, double phi_m, int j)
+  {
+    const int sz = 3 + 2 * n_landmarks_;
+
+    const double delta_x = xi_(3 + 2 * j)     - xi_(0);
+    const double delta_y = xi_(3 + 2 * j + 1) - xi_(1);
+    const double d2      = delta_x * delta_x + delta_y * delta_y;
+    const double d       = std::sqrt(d2);
+
+    if (d < 1e-6) {return;}
+
+    const double phi_hat = normalize_angle(std::atan2(delta_y, delta_x) - xi_(2));
+
+    // Innovation ν = z − ẑ.
+    Eigen::Vector2d nu;
+    nu(0) = r_m - d;
+    nu(1) = normalize_angle(phi_m - phi_hat);
+
+    const Eigen::MatrixXd H = build_H(j, delta_x, delta_y, d, d2, sz);
+    const Eigen::Matrix2d R = Eigen::Matrix2d::Identity() * sensor_noise_;
+    const Eigen::Matrix2d S = (H * Sigma_ * H.transpose()).eval() + R;
+    const Eigen::MatrixXd K = Sigma_ * H.transpose() * S.inverse();
+
+    xi_   += K * nu;
+    xi_(2) = normalize_angle(xi_(2));
+
+    Sigma_ = (Eigen::MatrixXd::Identity(sz, sz) - K * H) * Sigma_;
+  }
+
+  /// \brief Builds the 2 × sz range-bearing measurement Jacobian for landmark j.
+  ///
+  /// Non-zero columns: 0–2 (robot pose) and 3+2j, 3+2j+1 (landmark j).
+  ///
+  /// \param j   Landmark index.
+  /// \param dx  Map-frame x-distance from robot to landmark.
+  /// \param dy  Map-frame y-distance from robot to landmark.
+  /// \param d   Euclidean distance [m].
+  /// \param d2  Squared distance [m²].
+  /// \param sz  Total state size (3 + 2 * n_landmarks_).
+  /// \return 2 × sz Jacobian H.
+  Eigen::MatrixXd build_H(
+    int j, double dx, double dy, double d, double d2, int sz) const
+  {
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(2, sz);
+
+    // Robot-pose columns.
+    H(0, 0) = -dx / d;
+    H(0, 1) = -dy / d;
+    H(0, 2) =  0.0;
+    H(1, 0) =  dy / d2;
+    H(1, 1) = -dx / d2;
+    H(1, 2) = -1.0;
+
+    // Landmark columns.
+    H(0, 3 + 2 * j)     =  dx / d;
+    H(0, 3 + 2 * j + 1) =  dy / d;
+    H(1, 3 + 2 * j)     = -dy / d2;
+    H(1, 3 + 2 * j + 1) =  dx / d2;
+
+    return H;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Publishing helpers
+  // ---------------------------------------------------------------------------
+
+  /// \brief Broadcasts map → green/base_footprint with the current SLAM estimate.
+  ///
+  /// Only this dynamic transform is published.  The map → odom transform is a
+  /// static identity published from the launch file so that the blue robot
+  /// shows raw odometry drift in the map frame without being overridden.
+  ///
+  /// \param stamp Timestamp for the TF message.
+  void broadcast_transform(const rclcpp::Time & stamp)
+  {
+    geometry_msgs::msg::TransformStamped t;
+    t.header.stamp    = stamp;
+    t.header.frame_id = "map";
+    t.child_frame_id  = "green/base_footprint";
+    t.transform.translation.x = xi_(0);
+    t.transform.translation.y = xi_(1);
+    t.transform.translation.z = 0.0;
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, xi_(2));
+    t.transform.rotation.x = q.x();
+    t.transform.rotation.y = q.y();
+    t.transform.rotation.z = q.z();
+    t.transform.rotation.w = q.w();
+    tf_broadcaster_->sendTransform(t);
+  }
+
+  /// \brief Appends the current SLAM pose to the path and publishes it.
+  /// \param stamp Timestamp for the PoseStamped entry.
+  void update_path(const rclcpp::Time & stamp)
+  {
+    geometry_msgs::msg::PoseStamped ps;
+    ps.header.stamp    = stamp;
+    ps.header.frame_id = "map";
+    ps.pose.position.x = xi_(0);
+    ps.pose.position.y = xi_(1);
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, xi_(2));
+    ps.pose.orientation.x = q.x();
+    ps.pose.orientation.y = q.y();
+    ps.pose.orientation.z = q.z();
+    ps.pose.orientation.w = q.w();
+    path_msg_.poses.push_back(ps);
+    path_msg_.header.stamp = stamp;
+    path_pub_->publish(path_msg_);
+  }
+
+  /// \brief Publishes green cylinder markers for all SLAM-estimated landmarks.
+  /// \param stamp Timestamp for the marker headers.
+  void publish_map_landmarks(const rclcpp::Time & stamp)
   {
     visualization_msgs::msg::MarkerArray ma;
-    int point_id = 0;
-    for (size_t i = 0; i < clusters.size(); ++i) {
-      float r = static_cast<float>(i % 3) / 2.0f;
-      float g = static_cast<float>((i + 1) % 3) / 2.0f;
-      float b = static_cast<float>((i + 2) % 3) / 2.0f;
-
-      for (const auto & p : clusters[i]) {
-        visualization_msgs::msg::Marker m;
-        m.header.frame_id = frame; m.header.stamp = stamp;
-        m.ns = "clusters"; m.id = point_id++;
-        m.type = visualization_msgs::msg::Marker::SPHERE;
-        m.scale.x = 0.02; m.scale.y = 0.02; m.scale.z = 0.02;
-        m.pose.position.x = p.x; m.pose.position.y = p.y;
-        m.color.r = r; m.color.g = g; m.color.b = b; m.color.a = 1.0;
-        ma.markers.push_back(m);
-      }
+    for (int j = 0; j < n_landmarks_; ++j) {
+      visualization_msgs::msg::Marker m;
+      m.header.frame_id = "map";
+      m.header.stamp    = stamp;
+      m.ns              = "map_landmarks";
+      m.id              = j;
+      m.type            = visualization_msgs::msg::Marker::CYLINDER;
+      m.action          = visualization_msgs::msg::Marker::ADD;
+      m.pose.position.x = xi_(3 + 2 * j);
+      m.pose.position.y = xi_(3 + 2 * j + 1);
+      m.pose.position.z = 0.125;
+      constexpr double PILLAR_DIAMETER = 0.076;
+      m.scale.x = PILLAR_DIAMETER;
+      m.scale.y = PILLAR_DIAMETER;
+      m.scale.z = 0.25;
+      m.color.r = 0.0;
+      m.color.g = 1.0;
+      m.color.b = 0.0;
+      m.color.a = 1.0;
+      ma.markers.push_back(m);
     }
-    cluster_pub_->publish(ma);
+    map_landmark_pub_->publish(ma);
   }
 
-  double dist_threshold_;
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr landmark_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr cluster_pub_;
+  // ---------------------------------------------------------------------------
+  // Utility
+  // ---------------------------------------------------------------------------
+
+  /// \brief Wraps an angle to the range [−π, π].
+  /// \param a Input angle [rad].
+  /// \return Normalised angle [rad].
+  static double normalize_angle(double a)
+  {
+    while (a >  M_PI) {a -= 2.0 * M_PI;}
+    while (a < -M_PI) {a += 2.0 * M_PI;}
+    return a;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Member variables
+  // ---------------------------------------------------------------------------
+
+  /// \brief Variance of the robot-pose process noise (diagonal, per prediction step).
+  double process_noise_;
+
+  /// \brief Variance of range and bearing sensor noise (diagonal).
+  double sensor_noise_;
+
+  /// \brief Euclidean distance gate threshold for data association [m].
+  double assoc_threshold_;
+
+  /// \brief Number of landmarks currently tracked in the EKF state.
+  int n_landmarks_;
+
+  /// \brief Differential-drive model storing track_width and wheel_radius.
+  turtlelib::DiffDrive robot_;
+
+  /// \brief Previous cumulative wheel angles [rad], used to compute per-step deltas.
+  double prev_left_, prev_right_;
+
+  /// \brief True until the first joint-state message is received.
+  bool first_js_;
+
+  /// \brief Full EKF state vector ξ = [x, y, θ, m1x, m1y, …]ᵀ.
+  Eigen::VectorXd xi_;
+
+  /// \brief Full EKF covariance Σ, size (3 + 2N) × (3 + 2N).
+  Eigen::MatrixXd Sigma_;
+
+  /// \brief Pure odometry estimate [x, y, θ]ᵀ tracked in parallel with xi_.
+  ///        Receives the same wheel-delta updates as xi_ but no EKF correction.
+  ///        Used to compute the final odometry error reported in README.md.
+  Eigen::Vector3d xi_odom_;
+
+  /// \brief Accumulated SLAM path published on ~/path.
+  nav_msgs::msg::Path path_msg_;
+
+  /// \brief Subscription to wheel joint states (prediction step trigger).
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub_;
+
+  /// \brief Subscription to detected landmark positions (measurement update trigger).
+  rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr landmark_sub_;
+
+  /// \brief Publisher for the SLAM estimated path.
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_;
+
+  /// \brief Publisher for SLAM estimated landmark cylinders.
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr map_landmark_pub_;
+
+  /// \brief TF broadcaster for map → green/base_footprint.
+  std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<Landmarks>());
+  rclcpp::spin(std::make_shared<EkfSlam>());
   rclcpp::shutdown();
   return 0;
 }

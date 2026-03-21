@@ -39,6 +39,7 @@ target_link_libraries(slam PUBLIC
       tf2_ros::static_transform_broadcaster_node
       tf2_ros::tf2_ros
       turtlelib::turtlelib
+      Eigen3::Eigen
 )
 
 # 2. Landmarks Node

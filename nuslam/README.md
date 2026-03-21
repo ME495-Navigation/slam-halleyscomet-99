@@ -1,95 +1,198 @@
 # Nuslam
-A Feature-Based Extended Kalman Filter (EKF) SLAM implementation for the Nuturtle robot. This package enables the robot to estimate its own pose and the locations of landmarks simultaneously, effectively correcting odometry drift using sensor measurements.
+
+A Feature-Based Extended Kalman Filter (EKF) SLAM implementation for the Nuturtle robot.
+This package enables the robot to estimate its own pose and the locations of landmarks
+simultaneously, correcting odometry drift using laser scan measurements.
 
 ## Visualization
-The SLAM system visualizes three distinct robot states to demonstrate the filter's performance:
-* **Red Robot**: Ground Truth (the actual physical location in the simulation).
-* **Blue Robot**: Pure Odometry (uncorrected position).
-* **Green Robot**: SLAM Estimate (the EKF's best guess, corrected by landmark sightings).
 
-### SLAM Performance Demo
+The SLAM system visualizes three distinct robot states to demonstrate filter performance:
 
-The video demonstrates the performance of the Extended Kalman Filter (EKF) SLAM algorithm during a simulated navigation task involving high odometry noise and physical collisions. The visualization displays the divergence between uncorrected wheel odometry and the SLAM state estimate. When the robot encounters a boundary, the uncorrected odometry pose continues to accumulate position data based on wheel rotation, while the SLAM estimate remains stationary and aligned with the ground truth robot. This behavior is driven by the EKF correction step, which utilizes relative landmark measurements from the sensor model to calculate the map-to-odom transform, effectively counteracting the integration error of the kinematic model.
+- **Red Robot**: Ground truth (actual position from the simulator).
+- **Blue Robot**: Pure odometry (uncorrected, accumulates drift).
+- **Green Robot**: SLAM estimate (EKF-corrected using landmark observations).
 
-https://private-user-images.githubusercontent.com/189086001/557105547-0cc00070-2560-4a84-9648-7b7a0073ec52.webm?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NzI0ODMyMzUsIm5iZiI6MTc3MjQ4MjkzNSwicGF0aCI6Ii8xODkwODYwMDEvNTU3MTA1NTQ3LTBjYzAwMDcwLTI1NjAtNGE4NC05NjQ4LTdiN2EwMDczZWM1Mi53ZWJtP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9QUtJQVZDT0RZTFNBNTNQUUs0WkElMkYyMDI2MDMwMiUyRnVzLWVhc3QtMSUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjAzMDJUMjAyMjE1WiZYLUFtei1FeHBpcmVzPTMwMCZYLUFtei1TaWduYXR1cmU9ODA1OTg5MjRkNDcwMTFkMWNlMmQ2YzgzMTBjNDMxYTYxYWMxYmJmNTEzOTQ0MzljM2ZkZjA2Y2I0OTJiNDc5OSZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QifQ.Q6OuVInHQdV18qytJUUN3kqNoKBVFV4suvffMEVtzNI
+## Demo
+
+### Unknown Data Association — Closed Loop
+
+The following screencast shows the robot completing a closed-loop circular path among
+five cylindrical landmarks using the unknown data association SLAM pipeline.  The green
+robot and green path track the EKF estimate, the blue robot and blue path show raw
+odometry drift, and the red robot and red path show the simulator ground truth.  Green
+cylinder markers are the SLAM-estimated landmark positions; red cylinders are the true
+obstacle positions.
+
+https://private-user-images.githubusercontent.com/189086001/567270831-570b31c0-159e-4ac9-b780-abfab9e5b0f5.webm?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NzQwOTc0NzgsIm5iZiI6MTc3NDA5NzE3OCwicGF0aCI6Ii8xODkwODYwMDEvNTY3MjcwODMxLTU3MGIzMWMwLTE1OWUtNGFjOS1iNzgwLWFiZmFiOWU1YjBmNS53ZWJtP1gtQW16LUFsZ29yaXRobT1BV1M0LUhNQUMtU0hBMjU2JlgtQW16LUNyZWRlbnRpYWw9QUtJQVZDT0RZTFNBNTNQUUs0WkElMkYyMDI2MDMyMSUyRnVzLWVhc3QtMSUyRnMzJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyNjAzMjFUMTI0NjE4WiZYLUFtei1FeHBpcmVzPTMwMCZYLUFtei1TaWduYXR1cmU9YWUxNjBjMTljNTlmODIxMjViNjU0OWM5NDhmYjQ4NjQ2ZjgyM2JlZWZjNGJiN2FkZDgwNGZmNGJiMzg0ZDk5YiZYLUFtei1TaWduZWRIZWFkZXJzPWhvc3QifQ.I-s_8fNOrAkYkz_QQQ5ow6lJuSLrA_rYgFwT9vxbpIE
 
 ### Final Convergence Screenshot
 
-The screenshot captures the final state of the system after completing a closed-loop path among five landmarks. The red robot and red path represent the ground truth trajectory provided by the simulator, while the green robot and green path indicate the SLAM state estimate derived from the joint robot-landmark state vector. The blue path illustrates the trajectory calculated through pure dead reckoning, showing significant lateral and longitudinal drift. Cylindrical green markers represent the estimated landmark positions calculated by the filter, which are overlaid with the actual simulator obstacles to show the convergence of the landmark sub-states. The transform tree correctly displays the relationship between the static world frame and the dynamic correction of the odometry frame.
+![SLAM convergence after closed loop](images/slam_demo.png)
 
-![Slam Convergence](images/slam_demo.png)
+## Algorithm
+
+### Landmark Detection
+
+Raw 2D laser scan data is processed by the `landmarks` node in three stages:
+
+1. **Clustering** — consecutive scan points within a distance threshold (0.20 m) are
+   grouped into clusters.  Clusters with fewer than 3 points are discarded.  A
+   wrap-around merge handles clusters that straddle the 0°/360° scan boundary.
+
+2. **Classification** — each cluster is tested against the Inscribed Angle Theorem
+   (Xavier et al., ICRA 2005).  For a cluster lying on a circular arc, the angle
+   subtended by the arc endpoints at any interior point is approximately constant.
+   A cluster passes if the standard deviation of these angles is below 0.25 rad and
+   the mean angle is between 80° and 170°.  This rejects wall segments, which have
+   means near 0° or 180° and high standard deviation.
+
+3. **Circle fitting** — clusters that pass classification are fit to a circle using
+   the Pratt algebraic method (Al-Sharadqah and Chernov, Electronic Journal of
+   Statistics, 2009).  The fitted radius is checked against the known pillar size;
+   detections with radius outside [0.01, 0.12] m are discarded.
+
+### EKF SLAM
+
+The filter maintains a joint state vector
+```
+ξ = [x, y, θ, m₁ₓ, m₁ᵧ, …, mₙₓ, mₙᵧ]ᵀ
+```
+
+of size 3 + 2N, where N is the number of landmarks discovered so far.
+
+**Prediction step** — wheel angle deltas from `red/joint_states` are converted to a
+body-frame displacement via the differential-drive kinematics model.  The displacement
+is rotated into the world frame and applied to the robot-pose block of ξ.  The
+covariance Σ is propagated as Σ = F Σ Fᵀ + Q, where F is the linearised motion
+Jacobian and Q is the process noise matrix (applied to the robot-pose block only).
+
+**Data association** — each incoming landmark measurement is projected into the map
+frame using the current SLAM pose estimate.  The nearest known landmark within a
+Euclidean distance gate (0.5 m) is selected as the associated landmark.  If no
+landmark falls within the gate the measurement is treated as a new landmark.
+
+Euclidean distance is used instead of Mahalanobis distance because newly initialised
+landmarks carry an initial covariance of 1×10⁶.  At this scale the Mahalanobis
+distance collapses to near zero for every incoming measurement, causing systematic
+false associations and filter divergence.
+
+**Measurement update** — for each associated landmark the 2×(3+2N) range-bearing
+Jacobian H is computed, the Kalman gain K = Σ Hᵀ (H Σ Hᵀ + R)⁻¹ is calculated, and
+the state and covariance are updated:
+```
+ξ  ← ξ + K ν
+Σ  ← (I − KH) Σ
+```
+
+where ν = z − ẑ is the innovation between the measured and predicted range-bearing
+observation.
+
+## Performance Results
+
+### Landmark Estimation Error
+
+Results after three laps at v = 0.1 m/s, r = 0.5 m with no slip noise.
+
+| Landmark | True (x, y) [m]   | SLAM estimate (x, y) [m] | Error [m] |
+|----------|-------------------|--------------------------|-----------|
+| 0        | (-0.800,  1.000)  | (-0.783,  1.002)         | 0.017     |
+| 1        | ( 0.500,  0.800)  | ( 0.516,  0.779)         | 0.026     |
+| 2        | ( 0.700, -0.800)  | ( 0.683, -0.815)         | 0.023     |
+| 3        | (-0.400, -0.700)  | (-0.409, -0.697)         | 0.009     |
+| 4        | ( 1.200,  0.300)  | ( 1.200,  0.265)         | 0.035     |
+
+**Mean landmark error: 0.022 m**
+
+### Final Robot Pose Error
+
+Results after one complete closed loop, v = 0.1 m/s, r = 0.5 m.
+Ground truth final pose is the origin (x = 0, y = 0, θ = 0).
+
+| Estimate                  | x error [m] | y error [m] | Total error [m] |
+|---------------------------|-------------|-------------|-----------------|
+| Odometry vs Ground Truth  | 0.000       | 0.000       | 0.000           |
+| SLAM vs Ground Truth      | 0.002       | 0.002       | 0.003           |
+
+The SLAM estimate returns to within 3 mm of the origin after one complete loop.
+Odometry error is near zero for this test because the simulator runs without slip
+noise (`slip_fraction = 0.0`); the SLAM correction becomes essential under realistic
+noise conditions.
 
 ## Launch Files
-* **`slam.launch.xml`**: The primary entry point for running SLAM in simulation.
-    * Starts the `nusimulator` node (simulated world).
-    * Starts the `slam` node (EKF estimator).
-    * Launches `robot_state_publisher` for red, blue, and green namespaces.
-    * Opens `rviz2` with a configuration showing paths and landmarks.
-    * **Arguments**:
-        * `robot` (string): Set to `nusim` for simulation mode. (Default: `nusim`).
-        * `cmd_src` (string): Source of movement commands. Set to `teleop` for manual control.
-        * `input_noise` (double): Noise added to robot motion.
-        * `slip_fraction` (double): Wheel slip ratio.
-        * `max_range` (double): Sensing radius for landmarks.
 
-## Execution Instructions
-To run SLAM with the recommended parameters for Task L.2/V.4 (enabled noise and limited sensor range):
+### `unknown_data_assoc.launch.xml`
 
+Runs the full unknown data association SLAM pipeline in simulation.
 ```bash
-ros2 launch nuslam slam.launch.xml \
-  robot:=nusim \
-  cmd_src:=teleop \
-  input_noise:=0.005 \
-  slip_fraction:=0.03 \
-  basic_sensor_variance:=0.0005 \
-  max_range:=2.0
+ros2 launch nuslam unknown_data_assoc.launch.xml cmd_src:=circle
 ```
 
-## EKF SLAM Implementation Details
-The package implements a standard Feature-Based Extended Kalman Filter (EKF) SLAM algorithm:
-
-* **State Vector**: Maintains a joint state vector $\xi$ of size $(3 + 2N)$, where $N$ is the number of landmarks:
-    $$\xi = [x, y, \theta, m_{0,x}, m_{0,y}, \dots, m_{N,x}, m_{N,y}]^T$$
-* **Prediction Step**: Uses a differential drive non-linear motion model to propagate the robot state. The covariance $\Sigma$ is propagated using the Jacobian of the motion model $G$ and the process noise $Q$:
-    $$\Sigma_{t} = G_t \Sigma_{t-1} G_t^T + Q$$
-* **Correction Step**: Uses a Cartesian measurement model. When a landmark is observed, the algorithm calculates the measurement Jacobian $H$ and the Kalman Gain $K$ to update the state vector and covariance based on the innovation (difference between actual and predicted sensor readings).
-* **Known Data Association**: The system utilizes unique landmark IDs provided by the `nusimulator` to correctly associate incoming measurements with the corresponding landmarks in the state vector.
-
----
-
-## TF Tree Structure
-To properly visualize the divergence between ground truth, raw odometry, and the SLAM estimate, the following TF hierarchy is maintained:
-
-* **`nusim/world`**: The static absolute global frame (God frame).
-    * `-> red/base_footprint`: Ground truth robot position from the simulator.
-    * `-> blue/base_footprint`: Uncorrected odometry position (demonstrates drift and wall-ghosting).
-    * `-> map`: The SLAM origin frame.
-        * **`-> odom`**: Corrected by the SLAM node via the published `map` to `odom` transform.
-            * `-> green/base_footprint`: The SLAM estimated robot pose.
-
-### TF Tree Verification
-Run the command below to get the tf tree:
+Then start the robot moving:
 ```bash
-ros2 run tf2_tools view_frames
+ros2 service call /control nuturtle_control/srv/Control \
+  "{velocity: 0.1, radius: 0.5}"
 ```
-![TF Tree](images/tf.png)
 
-## Topics
-* **`~/path`** (`nav_msgs/msg/Path`): The **green** path representing the SLAM estimate.
-* **`~/odom_path`** (`nav_msgs/msg/Path`): The **blue** path representing uncorrected odometry drift.
-* **`~/slam_obstacles`** (`visualization_msgs::msg::MarkerArray`): **Green** cylindrical markers representing estimated landmark locations.
-* **`green/joint_states`** (`sensor_msgs/msg/JointState`): Joint positions for the **green** robot model wheels.
-* **`/red/joint_states`** (`sensor_msgs/msg/JointState`): Input encoder data from the simulation (**red** robot).
-* **`/fake_sensor`** (`visualization_msgs/msg/MarkerArray`): Noisy relative landmark measurements used for EKF correction.
+To stop:
+```bash
+ros2 service call /stop std_srvs/srv/Empty {}
+```
+
+**Arguments:**
+
+| Argument      | Default                              | Description                          |
+|---------------|--------------------------------------|--------------------------------------|
+| `config_file` | `nusim/config/basic_world.yaml`      | World parameters (obstacles, arena). |
+| `rviz_config` | `nuslam/config/unknown_data_assoc.rviz` | RViz layout.                      |
+| `cmd_src`     | `circle`                             | `circle` or `teleop`.                |
+
+### `landmark_detect.launch.xml`
+
+Runs landmark detection only (no SLAM), for debugging the sensor pipeline.
+```bash
+ros2 launch nuslam landmark_detect.launch.xml
+```
+
+## TF Tree
+```
+nusim/world (static)
+├── red/base_footprint      ← ground truth from nusimulator
+│   └── red/base_link
+│       └── red/base_scan
+└── map (static identity with nusim/world)
+    ├── green/base_footprint ← SLAM estimate (published by slam node)
+    │   └── green/base_link
+    └── odom (static identity with map)
+        └── blue/base_footprint ← raw odometry from odometry node
+            └── blue/base_link
+```
 
 ## Parameters
-The `slam` node is configured via the following parameters:
 
-### Frame IDs
-* **`body_id`** (string): The frame ID for the green robot body. (Default: `green/base_footprint`)
-* **`odom_id`** (string): The frame ID for the odometry frame. (Default: `odom`)
-* **`map_id`** (string): The frame ID for the SLAM map frame. (Default: `map`)
+### `slam` node
 
-### Robot Geometry
-* **`wheel_radius`** (double): Radius of the robot wheels [m].
-* **`track_width`** (double): Distance between the wheels [m].
+| Parameter          | Default | Description                                       |
+|--------------------|---------|---------------------------------------------------|
+| `wheel_radius`     | 0.033   | Wheel radius [m].                                 |
+| `track_width`      | 0.16    | Distance between wheel centres [m].               |
+| `process_noise`    | 0.001   | Robot-pose process noise variance.                |
+| `sensor_noise`     | 0.1     | Range and bearing sensor noise variance.          |
+| `assoc_threshold`  | 0.5     | Euclidean distance gate for data association [m]. |
+
+### `landmarks` node
+
+| Parameter       | Default | Description                                                  |
+|-----------------|---------|--------------------------------------------------------------|
+| `threshold`     | 0.15    | Distance threshold for clustering adjacent scan points [m].  |
+| `laser_height`  | 0.172   | Height of laser scan frame above ground plane [m].           |
+
+## Topics
+
+| Topic                         | Type                                    | Description                          |
+|-------------------------------|-----------------------------------------|--------------------------------------|
+| `/slam/path`                  | `nav_msgs/msg/Path`                     | Green SLAM estimated trajectory.     |
+| `/slam/map_landmarks`         | `visualization_msgs/msg/MarkerArray`    | Green estimated landmark cylinders.  |
+| `/landmarks/detected_landmarks` | `visualization_msgs/msg/MarkerArray`  | Magenta detected landmark cylinders. |
+| `/landmarks/clusters`         | `visualization_msgs/msg/MarkerArray`    | Coloured cluster debug points.       |
+| `/odometry/path`              | `nav_msgs/msg/Path`                     | Blue odometry trajectory.            |
+| `/nusimulator/path`           | `nav_msgs/msg/Path`                     | Red ground truth trajectory.         |
