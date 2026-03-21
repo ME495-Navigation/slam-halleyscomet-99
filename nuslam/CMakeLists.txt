@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.22)
 project(nuslam)
 
 # --- Compiler Settings ---
-# Enable C++23 to match turtlelib and modern standards
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -20,15 +19,14 @@ find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(turtlelib REQUIRED) # Your custom math library
+find_package(turtlelib REQUIRED) 
 find_package(nuturtlebot_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
 
 # --- Executable Targets ---
 
-# Define the SLAM node
+# 1. SLAM Node
 add_executable(slam src/slam.cpp)
-
-# Link dependencies
 target_link_libraries(slam PUBLIC
       ${geometry_msgs_TARGETS}
       ${nav_msgs_TARGETS}
@@ -43,21 +41,26 @@ target_link_libraries(slam PUBLIC
       turtlelib::turtlelib
 )
 
+# 2. Landmarks Node
+add_executable(landmarks src/landmarks.cpp)
+target_link_libraries(landmarks PUBLIC
+      ${sensor_msgs_TARGETS}
+      ${visualization_msgs_TARGETS}
+      rclcpp::rclcpp
+      sensor_msgs::sensor_msgs_library
+      turtlelib::turtlelib
+      Eigen3::Eigen
+)
+
 # --- Installation ---
 
-# Install the executables to the lib/nuslam directory
 install(TARGETS
   slam
+  landmarks
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# Install launch files
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
-
-# Install configuration files (URDFs, YAMLs, RViz configs)
-install(DIRECTORY config
+install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -69,5 +72,4 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-# --- Ament Package Macro ---
 ament_package()
