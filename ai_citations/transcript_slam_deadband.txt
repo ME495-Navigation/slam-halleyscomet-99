@@ -1,0 +1,30 @@
+AI Tool: Claude Sonnet 4.6 (Anthropic)
+Date: 2026-03-21
+Topic: Spurious SLAM drift when robot is stationary on physical hardware
+
+--- Summary of interaction ---
+
+On the real TurtleBot3, the green robot (SLAM estimate) was accumulating
+position drift even when the robot was not moving.  The path was building
+up small random offsets at ~100 Hz.
+
+I asked what could cause the EKF prediction step to receive non-zero
+wheel deltas when the motors were off.
+
+The explanation was that physical encoder hardware produces low-level
+quantisation noise: each joint_states message reports a slightly different
+position even when the wheels are stationary, because the encoder
+resolution is finite and the firmware samples it continuously.  Feeding
+these micro-deltas into the diff-drive kinematics and EKF prediction
+accumulates a random walk.
+
+I asked what the standard approach is to filter this out without
+completely disabling the prediction step.  The suggested approach was a
+dead-band on the delta magnitudes:
+  if |dl| < DEADBAND && |dr| < DEADBAND: return early
+
+with DEADBAND = 0.01 rad, which is well below any intentional motion
+(typical cmd_vel produces deltas ~0.1 rad per callback) but above the
+encoder noise floor on this hardware.
+
+--- End of summary ---

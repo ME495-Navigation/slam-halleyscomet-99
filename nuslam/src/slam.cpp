@@ -142,6 +142,7 @@ private:
     // timestamp (not wall clock) to stay consistent with robot_state_publisher.
     broadcast_transform(msg->header.stamp);
 
+    // ############################ Begin_Citation [5] ############################
     // Dead-band: only run the EKF prediction when the delta is large enough
     // to represent real motion.  Physical encoders produce non-zero noise even
     // when stationary; feeding these into the filter causes spurious drift.
@@ -149,6 +150,7 @@ private:
     if (std::abs(dl) < ENCODER_DEADBAND && std::abs(dr) < ENCODER_DEADBAND) {
       return;
     }
+    // ############################ End_Citation [5] ############################
 
     prev_left_ = left;
     prev_right_ = right;
@@ -253,6 +255,11 @@ private:
   /// \param r_m   Measured range [m].
   /// \param phi_m Measured bearing [rad].
   /// \return Associated landmark index, or −1 for a new landmark.
+  // ############################ Begin_Citation [4] ############################
+  // Euclidean distance gating in the map frame for data association.
+  // Mahalanobis distance was not used because newly initialised landmarks
+  // carry covariance ~1e6, collapsing Mahalanobis distance to near zero
+  // and causing systematic false associations.
   int data_associate(double r_m, double phi_m) const
   {
     const double mx_pred = xi_(0) + r_m * std::cos(phi_m + xi_(2));
@@ -274,6 +281,7 @@ private:
 
     return best_j;
   }
+  // ############################ End_Citation [4] ############################
 
   /// \brief Extends the state vector and covariance to include a new landmark.
   ///
@@ -403,10 +411,14 @@ private:
   /// \param stamp Timestamp for the PoseStamped entry.
   void update_path(const rclcpp::Time & stamp)
   {
+    // ############################ Begin_Citation [6] ############################
+    // Throttle path updates to ~5 Hz to avoid a dense jagged path from the
+    // 100 Hz encoder callback on the real robot.
     constexpr double PATH_PERIOD = 0.2;
     const double t = stamp.seconds();
     if (t - last_path_time_ < PATH_PERIOD) {return;}
     last_path_time_ = t;
+    // ############################ End_Citation [6] ############################
 
     geometry_msgs::msg::PoseStamped ps;
     ps.header.stamp = stamp;

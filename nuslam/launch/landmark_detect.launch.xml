@@ -1,30 +1,21 @@
 <?xml version="1.0"?>
 <launch>
-  <!-- Path to the simulator world configuration -->
   <arg name="config_file"
        default="$(find-pkg-share nusim)/config/basic_world.yaml"
        description="YAML file containing world parameters (obstacles, arena size, etc.)"/>
 
-  <!-- Path to the RViz configuration for landmark detection -->
   <arg name="rviz_config"
        default="$(find-pkg-share nuslam)/config/landmark_detect.rviz"
        description="RViz configuration file to visualise landmark detection results"/>
 
-  <!-- Simulator node -->
   <node pkg="nusim" exec="nusimulator" name="nusimulator" output="screen">
     <param from="$(var config_file)"/>
   </node>
 
-  <!-- Landmark detection node -->
   <node pkg="nuslam" exec="landmarks" name="landmarks" output="screen">
     <param name="threshold" value="0.20"/>
   </node>
 
-  <!-- Robot state publisher: reads the URDF/xacro and broadcasts all TF frames,
-       including red/base_footprint -> red/base_scan at the URDF-defined LiDAR
-       height (z = 0.172 m for TurtleBot3 Burger).  Do NOT add a separate
-       static_transform_publisher for base_to_scan — it would override this
-       with z = 0 and drop the laser to ground level. -->
   <group>
     <push-ros-namespace namespace="red"/>
     <node pkg="robot_state_publisher" exec="robot_state_publisher"
@@ -35,7 +26,6 @@
     </node>
   </group>
 
-  <!-- Static TF: align the simulator world frame with the SLAM map frame -->
   <node pkg="tf2_ros" exec="static_transform_publisher" name="world_to_map"
         args="--x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0
               --frame-id nusim/world --child-frame-id map"/>

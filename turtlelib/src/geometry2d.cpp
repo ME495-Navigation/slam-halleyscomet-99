@@ -223,6 +223,7 @@ Circle fit_circle(const std::vector<Point2D> & cluster)
     const Eigen::VectorXd & eigenvalues = es.eigenvalues();
     const Eigen::MatrixXd & eigenvectors = es.eigenvectors();
 
+    // ############################ Begin_Citation [1] ############################
     // Find the index of the smallest *positive* eigenvalue.
     // SelfAdjointEigenSolver returns eigenvalues in ascending order, so we
     // iterate from the smallest and take the first one above the numerical
@@ -235,6 +236,7 @@ Circle fit_circle(const std::vector<Point2D> & cluster)
         min_idx = i;
       }
     }
+    // ############################ End_Citation [1] ############################
 
     if (min_idx == -1) {
       throw std::runtime_error("Pratt fit: no positive eigenvalue found — degenerate cluster.");

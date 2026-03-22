@@ -19,12 +19,6 @@
     </node>
   </group>
 
-  <!-- Landmark detection.
-       threshold=0.25 m for the real robot (physical LiDAR point gaps are larger
-       than in simulation due to sensor noise and surface reflectivity variation).
-       marker_lifetime=4.0 s keeps markers visible for ~10 scan cycles at 2.5 Hz,
-       preventing the flickering caused by the slow real-robot LiDAR update rate.
-       The /nusimulator/laser_scan topic is remapped to /scan for the real robot. -->
   <node pkg="nuslam" exec="landmarks" name="landmarks" output="screen">
     <param name="threshold" value="0.25"/>
     <param name="laser_height" value="0.172"/>
@@ -32,13 +26,6 @@
     <remap from="/nusimulator/laser_scan" to="/scan"/>
   </node>
 
-  <!-- EKF SLAM.
-       max_landmarks=7 caps the state size at 5 real obstacles + 2 buffer slots
-       for transient false positives.  This prevents runaway state growth from
-       real-world sensor noise while leaving headroom for occasional extra detections.
-       The real robot publishes joint states in the blue namespace; remap
-       red/joint_states -> blue/joint_states so the same binary works for both
-       simulation and real-robot runs without recompilation. -->
   <node pkg="nuslam" exec="slam" name="slam" output="screen">
     <param name="wheel_radius" value="0.033"/>
     <param name="track_width" value="0.16"/>
@@ -49,8 +36,6 @@
     <remap from="red/joint_states" to="blue/joint_states"/>
   </node>
 
-  <!-- Odometry: blue robot frame tracks raw encoder drift.
-       Divergence between blue and green paths shows SLAM correction benefit. -->
   <node pkg="nuturtle_control" exec="odometry" name="odometry" output="screen">
     <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml"/>
     <param name="body_id" value="blue/base_footprint"/>
@@ -61,8 +46,6 @@
     <remap from="odom" to="blue/odom"/>
   </node>
 
-  <!-- Green robot RSP: provides TF for the SLAM-estimated robot visual.
-       Wheel joints follow blue/joint_states so the wheels rotate correctly. -->
   <node pkg="robot_state_publisher" exec="robot_state_publisher" name="green_rsp">
     <param name="robot_description"
            value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=green')"/>
@@ -71,8 +54,6 @@
     <remap from="robot_description" to="green/robot_description"/>
   </node>
 
-  <!-- Static TF: SLAM map frame and odometry frame share the same origin at
-       launch time so odometry drift is visible as blue/green path divergence. -->
   <node pkg="tf2_ros" exec="static_transform_publisher" name="map_to_odom"
         args="--x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0
               --frame-id map --child-frame-id odom"/>

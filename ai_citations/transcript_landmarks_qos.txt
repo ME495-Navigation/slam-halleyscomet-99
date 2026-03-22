@@ -1,0 +1,27 @@
+AI Tool: Claude Sonnet 4.6 (Anthropic)
+Date: 2026-03-21
+Topic: ROS 2 QoS incompatibility — real LiDAR data not received by landmarks node
+
+--- Summary of interaction ---
+
+After deploying to the physical TurtleBot3, the landmarks node was not
+receiving any data on /scan despite the topic existing and the LiDAR
+publishing at ~2.5 Hz.  The terminal showed:
+
+  [landmarks] [WARN]: New publisher discovered on topic '/scan',
+  offering incompatible QoS. No messages will be sent to it.
+  Last incompatible policy: RELIABILITY_QOS_POLICY
+
+I asked what causes this warning and how to fix it without changing the
+LiDAR driver.  The explanation was that the hls_lfcd_lds_driver publishes
+with BEST_EFFORT reliability, while the default rclcpp subscription uses
+RELIABLE.  These are incompatible under ROS 2 DDS QoS negotiation rules.
+
+The fix was to construct the subscription with an explicit QoS profile:
+  const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+
+I asked whether this change would break the simulated scan subscriber,
+and confirmed it would not because nusimulator publishes with RELIABLE
+and a BEST_EFFORT subscriber accepts both policies.
+
+--- End of summary ---

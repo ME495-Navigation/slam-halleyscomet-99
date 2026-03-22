@@ -1,1 +1,24 @@
 Worked With: Daniel Augustin, Jyothi Kasina
+[1] Claude Sonnet 4.6. Anthropic. Used on: 2026-03-20.
+    Transcript Available: ./ai_citations/transcript_geometry2d.txt
+    Re: Pratt circle fitting eigenvalue selection bug in fit_circle().
+ 
+[2] Claude Sonnet 4.6. Anthropic. Used on: 2026-03-20.
+    Transcript Available: ./ai_citations/transcript_landmarks_qos.txt
+    Re: ROS 2 QoS incompatibility between real LiDAR publisher and subscriber.
+ 
+[3] Claude Sonnet 4.6. Anthropic. Used on: 2026-03-21.
+    Transcript Available: ./ai_citations/transcript_landmarks_deleteall.txt
+    Re: Duplicate marker ID warning in RViz when cluster count changes.
+ 
+[4] Claude Sonnet 4.6. Anthropic. Used on: 2026-03-21.
+    Transcript Available: ./ai_citations/transcript_slam_assoc.txt
+    Re: Data association strategy choice for EKF SLAM with unknown landmarks.
+ 
+[5] Claude Sonnet 4.6. Anthropic. Used on: 2026-03-21.
+    Transcript Available: ./ai_citations/transcript_slam_deadband.txt
+    Re: Spurious odometry drift from encoder noise on physical TurtleBot3.
+ 
+[6] Claude Sonnet 4.6. Anthropic. Used on: 2026-03-21.
+    Transcript Available: ./ai_citations/transcript_slam_paththrottle.txt
+    Re: Jagged SLAM path caused by high-frequency joint_states callback.

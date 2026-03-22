@@ -12,7 +12,6 @@
        default="circle"
        description="Source of velocity commands: circle or teleop."/>
 
-  <!-- Velocity source -->
   <group if="$(eval '\'$(var cmd_src)\' == \'circle\'')">
     <node pkg="nuturtle_control" exec="circle" name="circle">
       <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml"/>
@@ -24,7 +23,6 @@
           launch-prefix="xterm -e"/>
   </group>
 
-  <!-- Simulator -->
   <node pkg="nusim" exec="nusimulator" name="nusimulator" output="screen">
     <param from="$(var config_file)"/>
     <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml"/>
@@ -32,7 +30,6 @@
     <remap from="sensor_data" to="/red/sensor_data"/>
   </node>
 
-  <!-- Turtle control: cmd_vel to wheel commands -->
   <node pkg="nuturtle_control" exec="turtle_control" name="turtle_control">
     <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml"/>
     <remap from="wheel_cmd" to="/red/wheel_cmd"/>
@@ -40,15 +37,11 @@
     <remap from="joint_states" to="/red/joint_states"/>
   </node>
 
-  <!-- Landmark detection -->
   <node pkg="nuslam" exec="landmarks" name="landmarks" output="screen">
     <param name="threshold" value="0.20"/>
     <param name="laser_height" value="0.172"/>
   </node>
 
-  <!-- EKF SLAM.
-       mahalanobis_threshold=6.0 is the chi-squared 2 DOF 95% confidence value.
-       process_noise and sensor_noise are tuned for simulation at low speed. -->
   <node pkg="nuslam" exec="slam" name="slam" output="screen">
     <param name="wheel_radius" value="0.033"/>
     <param name="track_width" value="0.16"/>
@@ -57,7 +50,6 @@
     <param name="assoc_threshold" value="0.5"/>
   </node>
 
-  <!-- Odometry: drives the blue robot frame from wheel encoders -->
   <node pkg="nuturtle_control" exec="odometry" name="odometry" output="screen">
     <param from="$(find-pkg-share nuturtle_description)/config/diff_params.yaml"/>
     <param name="body_id" value="blue/base_footprint"/>
@@ -68,16 +60,12 @@
     <remap from="odom" to="blue/odom"/>
   </node>
 
-  <!-- Red robot: ground truth from nusim -->
   <include file="$(find-pkg-share nuturtle_description)/launch/load_one.launch.xml">
     <arg name="color" value="red"/>
     <arg name="use_rviz" value="false"/>
     <arg name="use_jsp" value="false"/>
   </include>
 
-  <!-- Green robot: SLAM estimate.
-       No push-ros-namespace — remap uses absolute /red/joint_states to avoid
-       the namespace-concatenation bug (green/red/joint_states). -->
   <node pkg="robot_state_publisher" exec="robot_state_publisher" name="green_rsp">
     <param name="robot_description"
            value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=green')"/>
@@ -86,7 +74,6 @@
     <remap from="robot_description" to="green/robot_description"/>
   </node>
 
-  <!-- Blue robot: odometry estimate. Same remap pattern as green. -->
   <node pkg="robot_state_publisher" exec="robot_state_publisher" name="blue_rsp">
     <param name="robot_description"
            value="$(command 'xacro $(find-pkg-share nuturtle_description)/urdf/turtlebot3_burger.urdf.xacro color:=blue')"/>
@@ -95,12 +82,10 @@
     <remap from="robot_description" to="blue/robot_description"/>
   </node>
 
-  <!-- Static TF: nusim world frame = SLAM map frame (identity) -->
   <node pkg="tf2_ros" exec="static_transform_publisher" name="world_to_map"
         args="--x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0
               --frame-id nusim/world --child-frame-id map"/>
 
-  <!-- Static TF: odom = world = map. -->
   <node pkg="tf2_ros" exec="static_transform_publisher" name="world_to_odom"
         args="--x 0 --y 0 --z 0 --yaw 0 --pitch 0 --roll 0
               --frame-id nusim/world --child-frame-id odom"/>

@@ -121,7 +121,6 @@ double Transform2D::rotation() const
   return theta_;
 }
 
-// Task B.9: Integrate Twist
 Transform2D integrate_twist(Twist2D tw)
 {
   if (almost_equal(tw.omega, 0.0)) {

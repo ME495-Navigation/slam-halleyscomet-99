@@ -1,0 +1,25 @@
+AI Tool: Claude Sonnet 4.6 (Anthropic)
+Date: 2026-03-21
+Topic: Pratt circle fitting — incorrect eigenvalue selection in fit_circle()
+
+--- Summary of interaction ---
+
+I was implementing the Pratt algebraic circle fitting algorithm and the
+fitted circle centres were consistently offset from the true obstacle
+positions in simulation.  I asked why selecting the largest eigenvalue
+of the Q matrix (formed as Y * H_inv * Y) produced wrong results, and
+whether the correct solution requires the smallest or largest eigenvalue.
+
+The key insight provided was: Eigen::SelfAdjointEigenSolver returns
+eigenvalues in *ascending* order (smallest first), and the Pratt method
+requires the eigenvector corresponding to the smallest *positive*
+eigenvalue — not the largest.  My original loop was finding the maximum,
+which is incorrect.
+
+I then asked how to safely skip near-zero or negative eigenvalues that
+arise from numerical noise, and the suggested guard was:
+  if (eigenvalues(i) > 1e-12 && eigenvalues(i) < min_val)
+
+This fix resolved the systematic position error in simulation.
+
+--- End of summary ---

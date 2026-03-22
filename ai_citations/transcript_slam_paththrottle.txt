@@ -1,0 +1,28 @@
+AI Tool: Claude Sonnet 4.6 (Anthropic)
+Date: 2026-03-21
+Topic: SLAM path appears jagged and cluttered on real robot
+
+--- Summary of interaction ---
+
+The /slam/path topic was updating at ~100 Hz (driven by joint_states),
+producing a very dense and visually jagged path in RViz even though the
+robot was moving smoothly.  Small encoder noise was creating zigzag
+artefacts that made it hard to assess SLAM quality.
+
+I asked whether it is appropriate to throttle path updates and how to do
+so without introducing a separate timer node.
+
+The approach suggested was to record the timestamp of the last path pose
+appended and skip the append if less than PATH_PERIOD seconds have elapsed:
+  if (stamp.seconds() - last_path_time_ < PATH_PERIOD) return;
+  last_path_time_ = stamp.seconds();
+
+with PATH_PERIOD = 0.2 s (5 Hz).  This reduces path density by 20x,
+gives a smooth readable trajectory in RViz, and does not require any
+additional nodes or timers because the check is inside the existing
+joint_callback that already receives the message timestamp.
+
+I confirmed that the TF broadcast should NOT be throttled, only the path
+append, so that the green robot model stays smooth in RViz.
+
+--- End of summary ---

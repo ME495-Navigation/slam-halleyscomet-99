@@ -50,10 +50,12 @@ public:
     laser_height_ = get_parameter("laser_height").as_double();
     marker_lifetime_ = get_parameter("marker_lifetime").as_double();
 
+    // ############################ Begin_Citation [2] ############################
     // Use BEST_EFFORT QoS to match the real TurtleBot3 LiDAR driver, which publishes
     // with BEST_EFFORT reliability.  A RELIABLE subscriber would be incompatible and
     // receive no messages from the physical sensor.
     const auto qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort();
+    // ############################ End_Citation [2] ############################
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       "/nusimulator/laser_scan", qos,
       std::bind(&Landmarks::scan_callback, this, std::placeholders::_1));
@@ -288,6 +290,7 @@ private:
   {
     visualization_msgs::msg::MarkerArray ma;
 
+    // ############################ Begin_Citation [3] ############################
     // Send DELETEALL first to clear stale markers from the previous scan cycle.
     // id=-1 avoids a duplicate-marker warning with the first point marker (id=0)
     // that would otherwise occur because both share the same namespace.
@@ -298,6 +301,7 @@ private:
     delete_all.id = -1;
     delete_all.action = visualization_msgs::msg::Marker::DELETEALL;
     ma.markers.push_back(delete_all);
+    // ############################ End_Citation [3] ############################
 
     int point_id = 0;
 

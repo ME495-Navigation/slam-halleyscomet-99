@@ -1,0 +1,26 @@
+AI Tool: Claude Sonnet 4.6 (Anthropic)
+Date: 2026-03-21
+Topic: RViz "Duplicate Marker" warning and cluster markers flickering
+
+--- Summary of interaction ---
+
+The /landmarks/clusters MarkerArray was showing "Status: Error" in RViz
+with the message:
+  "Duplicate Marker Check: Multiple Markers in the same MarkerArray
+   message had the same ns and id: (clusters, 0)"
+
+I asked what causes this and how to clear stale markers when the cluster
+point count changes between scan cycles.
+
+The explanation was that sending a DELETEALL marker before the new points
+is the standard ROS 2 approach to clearing a namespace, but the DELETEALL
+marker has a default id of 0, which collides with the first point marker
+(also id=0) in the same MarkerArray message.
+
+The fix was to explicitly set id=-1 on the DELETEALL marker:
+  delete_all.id = -1;
+
+This avoids the duplicate-ID warning while still clearing all stale
+markers from the previous scan cycle.
+
+--- End of summary ---

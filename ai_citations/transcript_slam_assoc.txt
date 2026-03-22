@@ -1,0 +1,32 @@
+AI Tool: Claude Sonnet 4.6 (Anthropic)
+Date: 2026-03-21
+Topic: EKF SLAM data association — Mahalanobis vs Euclidean distance
+
+--- Summary of interaction ---
+
+I implemented Mahalanobis distance gating for data association as
+described in Thrun, Burgard, Fox — Probabilistic Robotics Ch. 10, but
+the EKF was diverging: newly detected landmarks were being incorrectly
+associated with existing ones immediately after initialisation.
+
+I asked why the Mahalanobis distance would produce near-zero values for
+all incoming measurements when a landmark had just been added to the state.
+
+The explanation was: newly initialised landmarks are assigned a large
+initial covariance (1e6), which makes the innovation covariance S very
+large, so S^-1 is near zero, and the Mahalanobis distance
+  d = nu^T * S^-1 * nu
+collapses to near zero for *every* measurement.  This causes all
+measurements to appear to match the new landmark regardless of their
+actual position.
+
+I asked what a practical alternative was that avoids this degenerate case.
+The suggested approach was to project the measurement into the map frame
+using the current pose estimate and use Euclidean distance directly:
+  mx_pred = xi(0) + r * cos(phi + xi(2))
+  my_pred = xi(1) + r * sin(phi + xi(2))
+and gate on ||[mx_pred, my_pred] - [lm_x, lm_y]|| < threshold.
+
+This is less statistically rigorous but stable at initialisation.
+
+--- End of summary ---
